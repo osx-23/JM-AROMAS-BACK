@@ -92,11 +92,14 @@ public class AdminAuthFilter extends OncePerRequestFilter {
                 return;
             }
             req.setAttribute("adminUserId", userId);
-            chain.doFilter(req, res);
         } catch (IllegalArgumentException e) {
             res.sendError(401, "Sesión no válida");
+            return;
         } catch (Exception e) {
             res.sendError(503, "No se pudo verificar la sesión");
+            return;
         }
+        // No transformar excepciones posteriores del controlador en errores de autenticación.
+        chain.doFilter(req, res);
     }
 }
