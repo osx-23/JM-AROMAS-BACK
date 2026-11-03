@@ -19,6 +19,10 @@ No hay números de Yape, cuentas bancarias, QR ni teléfono de WhatsApp registra
 
 Nadie debe adivinar o inventar cuentas bancarias, monto de delivery, correo del administrador o imagen QR.
 
+## Activación segura
+
+Por seguridad, `POST /api/v1/checkout/pedidos` está deshabilitado por defecto mediante `CHECKOUT_ENABLED=false`. Para probar pedidos locales tras registrar cuentas y publicar productos, usar `CHECKOUT_ENABLED=true` en las variables del backend. **No habilitar ventas públicas** sin controles de abuso, tratamiento de datos personales, pruebas reales de comprobantes e inventario.
+
 ## Configurar local
 
 1. Actualizar ambos repositorios `feature/mvp-base`, en frontend `npm install && npm start`, backend `mvn spring-boot:run`.
