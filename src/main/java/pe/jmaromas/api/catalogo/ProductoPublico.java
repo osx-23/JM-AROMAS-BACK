@@ -16,5 +16,6 @@ public record ProductoPublico(
         List<String> imagenes,
         BigDecimal precioAnterior,
         String publicoObjetivo,
-        Integer contenidoMl
+        Integer contenidoMl,
+        String familiaOlfativa
 ) {}

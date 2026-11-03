@@ -31,7 +31,8 @@ public class InventarioController {
     public record Registro(String codigoBarras, String nombre, String sku,
                            String marca, String descripcion, UUID categoriaId,
                            BigDecimal precio, Integer stock,
-                           String publicoObjetivo, Integer contenidoMl) {}
+                           String publicoObjetivo, Integer contenidoMl,
+                           String familiaOlfativa) {}
     public record IngresoStock(Integer cantidad, String motivo) {}
 
     @GetMapping
@@ -40,6 +41,7 @@ public class InventarioController {
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
                    p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
                    p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
+                   p.familia_olfativa as "familiaOlfativa",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
             from public.productos p order by p.creado_en desc limit 100
@@ -53,6 +55,7 @@ public class InventarioController {
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
                    p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
                    p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
+                   p.familia_olfativa as "familiaOlfativa",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
             from public.productos p where p.codigo_barras = ? limit 1
@@ -74,19 +77,19 @@ public class InventarioController {
         if (sku.length() > 90 || sku.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "SKU inválido"));
         }
-        validarPresentacion(data.publicoObjetivo(),data.contenidoMl());
+        validarPresentacion(data.publicoObjetivo(),data.contenidoMl(),data.familiaOlfativa());
         UUID id = UUID.randomUUID();
         String slug = "producto-" + id.toString();
         try {
             int rows = jdbc.update("""
                 insert into public.productos
                     (id, codigo_barras, sku, slug, nombre, marca, descripcion, categoria_id,
-                     precio, stock, publico_objetivo, contenido_ml, activo, publicado)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, false)
+                     precio, stock, publico_objetivo, contenido_ml, familia_olfativa, activo, publicado)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, false)
                 """, id, codigo, sku, slug, data.nombre().strip(),
                 blankToNull(data.marca()), blankToNull(data.descripcion()),
                 data.categoriaId(), data.precio(), data.stock(),
-                data.publicoObjetivo(),data.contenidoMl());
+                data.publicoObjetivo(),data.contenidoMl(),data.familiaOlfativa());
             if (rows != 1) throw new IllegalStateException("No se insertó el producto");
             if (data.stock() > 0) {
                 jdbc.update("""
@@ -108,7 +111,7 @@ public class InventarioController {
     /** Stock no se modifica aquí: usar /stock para mantener movimientos auditables. */
     public record Edicion(String codigoBarras,String sku,String nombre,
                           String marca,String descripcion,BigDecimal precio,
-                          String publicoObjetivo,Integer contenidoMl) {}
+                          String publicoObjetivo,Integer contenidoMl,String familiaOlfativa) {}
 
     @PatchMapping("/{id}")
     @Transactional
@@ -125,7 +128,7 @@ public class InventarioController {
             throw new IllegalArgumentException("Marca demasiado larga");
         if(data.descripcion()!=null && data.descripcion().length()>4000)
             throw new IllegalArgumentException("Descripción demasiado larga");
-        validarPresentacion(data.publicoObjetivo(),data.contenidoMl());
+        validarPresentacion(data.publicoObjetivo(),data.contenidoMl(),data.familiaOlfativa());
         List<Integer> existentes=jdbc.query("select stock from public.productos where id=? for update",
             (rs,n)->rs.getInt(1),id);
         if(existentes.isEmpty())return ResponseEntity.notFound().build();
@@ -139,11 +142,13 @@ public class InventarioController {
         try {
             jdbc.update("""
                 update public.productos set codigo_barras=?,sku=?,nombre=?,marca=?,
-                descripcion=?,precio=?,publico_objetivo=?,contenido_ml=?,actualizado_en=now()
+                descripcion=?,precio=?,publico_objetivo=?,contenido_ml=?,
+                familia_olfativa=?,actualizado_en=now()
                 where id=?
                 """,codigo,data.sku().strip().toUpperCase(Locale.ROOT),
                 data.nombre().strip(),blankToNull(data.marca()),blankToNull(data.descripcion()),
-                data.precio(),data.publicoObjetivo(),data.contenidoMl(),id);
+                data.precio(),data.publicoObjetivo(),data.contenidoMl(),
+                data.familiaOlfativa(),id);
         }catch(DataIntegrityViolationException e){
             return ResponseEntity.status(HttpStatus.CONFLICT).body(
                 Map.of("error","Este código de barras o SKU ya existe"));
@@ -151,11 +156,14 @@ public class InventarioController {
         return ResponseEntity.ok(Map.of("id",id,"mensaje","Producto actualizado"));
     }
 
-    private static void validarPresentacion(String publico,Integer ml) {
+    private static void validarPresentacion(String publico,Integer ml,String familia) {
         if(publico!=null && !List.of("HOMBRE","MUJER","UNISEX").contains(publico))
             throw new IllegalArgumentException("Selecciona hombre, mujer o unisex");
         if(ml!=null && (ml<1 || ml>2000))
             throw new IllegalArgumentException("La presentación debe ser entre 1 y 2000 ml");
+        if(familia!=null && !List.of("Floral","Amaderada","Cítrica",
+            "Fresca","Oriental","Frutal").contains(familia))
+            throw new IllegalArgumentException("Familia olfativa no admitida");
     }
 
     public record Publicacion(boolean publicado) {}

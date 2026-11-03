@@ -16,3 +16,14 @@ do $$ begin
 end $$;
 -- El esquema original ya incluye public.descuentos con fechas, tipos y activo.
 -- El backend calcula las promociones vigentes en las compras: nunca confiar en el precio del frontend.
+
+-- Clasificación olfativa para que el filtro existente en el catálogo sea real.
+alter table public.productos add column if not exists familia_olfativa text;
+do $$ begin
+  if not exists(select 1 from pg_constraint where conrelid='public.productos'::regclass
+    and conname='productos_familia_olfativa_check') then
+    alter table public.productos add constraint productos_familia_olfativa_check
+      check (familia_olfativa is null or familia_olfativa in
+        ('Floral','Amaderada','Cítrica','Fresca','Oriental','Frutal'));
+  end if;
+end $$;

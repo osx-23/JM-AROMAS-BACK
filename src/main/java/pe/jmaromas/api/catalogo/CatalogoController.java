@@ -23,7 +23,7 @@ public class CatalogoController {
         select p.id, p.nombre, p.slug, p.marca, p.descripcion,
                p.precio-coalesce(d.rebaja,0) as precio,
                case when coalesce(d.rebaja,0)>0 then p.precio else null end as precio_anterior,
-               p.contenido_ml, p.publico_objetivo,
+               p.contenido_ml, p.publico_objetivo, p.familia_olfativa,
                p.stock > 0 as disponible, c.nombre as categoria,
                (select array_agg(i.ruta_storage order by i.orden,i.creada_en,i.id)
                 from public.imagenes_producto i where i.producto_id=p.id) as fotos
@@ -89,7 +89,8 @@ public class CatalogoController {
                 fotos,
                 rs.getBigDecimal("precio_anterior"),
                 rs.getString("publico_objetivo"),
-                rs.getObject("contenido_ml",Integer.class)
+                rs.getObject("contenido_ml",Integer.class),
+                rs.getString("familia_olfativa")
         );
     }
 }
