@@ -38,9 +38,13 @@ public class RevisarPagosController {
             p.total,p.estado,p.estado_pago as "estadoPago",
             p.cliente_snapshot::text as "clienteJson",
             p.direccion_snapshot::text as "direccionJson",p.creado_en as "creadoEn",
-            c.creado_en as "comprobanteEn"
+            c.creado_en as "comprobanteEn",
+            m.titulo as "cuentaTitulo",m.titular as "cuentaTitular",
+            m.banco as "cuentaBanco",m.numero_cuenta as "cuentaNumero",
+            m.numero_yape as "cuentaYape",m.cci as "cuentaCci"
           from public.pedidos p
           join app_private.comprobantes_pago c on c.pedido_id=p.id
+          left join app_private.medios_pago m on m.id=p.medio_pago_id
           where p.estado_pago='PENDIENTE_CONFIRMACION'
           order by c.creado_en asc limit 100
           """);
