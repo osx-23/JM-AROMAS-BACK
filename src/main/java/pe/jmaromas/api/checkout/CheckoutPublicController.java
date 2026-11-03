@@ -32,7 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/checkout")
 public class CheckoutPublicController {
     private final JdbcTemplate jdbc;
-    @Value("\${app.checkout.enabled:false}")
+    @Value("${app.checkout.enabled:false}")
     private boolean checkoutEnabled;
     private final RestClient auth;
     private final String publishableKey;
