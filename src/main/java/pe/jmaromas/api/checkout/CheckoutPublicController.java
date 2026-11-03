@@ -32,6 +32,8 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/checkout")
 public class CheckoutPublicController {
     private final JdbcTemplate jdbc;
+    @Value("\${app.checkout.enabled:false}")
+    private boolean checkoutEnabled;
     private final RestClient auth;
     private final String publishableKey;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -80,6 +82,9 @@ public class CheckoutPublicController {
     @Transactional
     public ResponseEntity<Map<String,Object>> crear(@RequestBody PedidoSolicitud data,
          @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
+        if(!checkoutEnabled)
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "El checkout no está habilitado para ventas todavía");
         Cliente c=data.cliente();
         validarCliente(c);
         if(data.idempotencia()==null) throw new IllegalArgumentException("Identificador de operación obligatorio");
