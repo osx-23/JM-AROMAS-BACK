@@ -95,6 +95,25 @@ public class InventarioController {
         }
     }
 
+    public record Publicacion(boolean publicado) {}
+
+    @PatchMapping("/{id}/publicacion")
+    @Transactional
+    public ResponseEntity<Map<String,Object>> publicar(@PathVariable UUID id,
+         @RequestBody Publicacion body) {
+        List<Map<String,Object>> rows=jdbc.queryForList("""
+           select activo,stock,publicado from public.productos where id=? for update
+           """,id);
+        if(rows.isEmpty())return ResponseEntity.notFound().build();
+        if(body.publicado() && (!Boolean.TRUE.equals(rows.getFirst().get("activo")) ||
+             ((Number)rows.getFirst().get("stock")).intValue()<1))
+             return ResponseEntity.badRequest().body(Map.of(
+                "error","Para publicar, el producto debe estar activo y tener stock"));
+        jdbc.update("update public.productos set publicado=?,actualizado_en=now() where id=?",
+            body.publicado(),id);
+        return ResponseEntity.ok(Map.of("id",id,"publicado",body.publicado()));
+    }
+
     @PatchMapping("/{id}/stock")
     @Transactional
     public ResponseEntity<Map<String,Object>> ingresar(@PathVariable UUID id,
