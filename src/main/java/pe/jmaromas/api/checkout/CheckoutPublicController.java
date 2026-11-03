@@ -107,23 +107,37 @@ public class CheckoutPublicController {
 
         List<Linea> lineas=new ArrayList<>();
         BigDecimal subtotal=BigDecimal.ZERO;
+        BigDecimal descuentoTotal=BigDecimal.ZERO;
         // Locks en orden de UUID para evitar interbloqueos entre compras simultáneas.
         for(var entrada:cantidades.entrySet()){
             List<Linea> filas=jdbc.query("""
-              select id,sku,nombre,precio,stock from public.productos
-              where id=? and activo=true and publicado=true for update
+              select p.id,p.sku,p.nombre,p.precio,p.stock,
+                     coalesce((select case when d.tipo='PORCENTAJE'
+                                       then round(p.precio*d.valor/100,2)
+                                       else d.valor end
+                       from public.descuentos d
+                       where d.producto_id=p.id and d.activo=true
+                         and now()>=d.inicio and now()<d.fin
+                       order by d.inicio desc,d.id desc limit 1),0) as rebaja
+              from public.productos p
+              where p.id=? and p.activo=true and p.publicado=true for update of p
               """,(rs,n)->new Linea(
                   rs.getObject("id",UUID.class),rs.getString("sku"),
                   rs.getString("nombre"),rs.getBigDecimal("precio"),
+                  rs.getBigDecimal("rebaja"),
                   rs.getInt("stock"),entrada.getValue()),entrada.getKey());
             if(filas.isEmpty())throw new IllegalArgumentException("Producto no disponible: "+entrada.getKey());
             Linea linea=filas.getFirst();
             if(linea.stock()<linea.cantidad())
                 throw new IllegalArgumentException("Stock insuficiente para "+linea.nombre());
-            subtotal=subtotal.add(linea.precio().multiply(BigDecimal.valueOf(linea.cantidad())));
+            BigDecimal cantidad=BigDecimal.valueOf(linea.cantidad());
+            subtotal=subtotal.add(linea.precio().multiply(cantidad));
+            descuentoTotal=descuentoTotal.add(linea.rebaja().multiply(cantidad));
             lineas.add(linea);
         }
-        if(subtotal.signum()<1) throw new IllegalArgumentException("El pedido debe tener un monto positivo");
+        BigDecimal totalConDescuento=subtotal.subtract(descuentoTotal);
+        if(totalConDescuento.signum()<1)
+            throw new IllegalArgumentException("El pedido debe tener un monto positivo");
         UUID pedidoId=UUID.randomUUID();
         String codigo="JMA-"+LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)+"-"+
             pedidoId.toString().substring(0,8).toUpperCase(Locale.ROOT);
@@ -141,22 +155,23 @@ public class CheckoutPublicController {
             jsonb_build_object('nombre',?,'dni',?,'telefono',?,'email',?),
             jsonb_build_object('destinatario',?,'telefono',?,'departamento',?,'provincia',?,
                                'distrito',?,'linea_direccion',?,'referencia',?),
-            ?,?,'PENDIENTE','PENDIENTE',?,0,0,?,?,now()+interval '24 hours')
+            ?,?,'PENDIENTE','PENDIENTE',?,?,0,?,?,now()+interval '24 hours')
           """,
           pedidoId,codigo,usuario,data.idempotencia(),
           c.nombre().strip(),c.dni(),c.telefono().strip(),c.email().strip().toLowerCase(Locale.ROOT),
           c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
           c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),limpiar(c.referencia()),
-          metodo,idMedio,subtotal,subtotal,hash);
+          metodo,idMedio,subtotal,descuentoTotal,totalConDescuento,hash);
 
         for(Linea l:lineas){
-            BigDecimal totalLinea=l.precio().multiply(BigDecimal.valueOf(l.cantidad()));
+            BigDecimal totalLinea=l.precio().subtract(l.rebaja())
+                .multiply(BigDecimal.valueOf(l.cantidad()));
             jdbc.update("""
                 insert into public.detalles_pedido
                 (pedido_id,producto_id,sku_snapshot,nombre_snapshot,cantidad,
                  precio_unitario,descuento_unitario,total_linea)
-                values(?,?,?,?,?,?,0,?)
-                """,pedidoId,l.id(),l.sku(),l.nombre(),l.cantidad(),l.precio(),totalLinea);
+                values(?,?,?,?,?,?,?,?)
+                """,pedidoId,l.id(),l.sku(),l.nombre(),l.cantidad(),l.precio(),l.rebaja(),totalLinea);
             jdbc.update("update public.productos set stock=stock-?, actualizado_en=now() where id=?",
                 l.cantidad(),l.id());
             jdbc.update("""
@@ -193,7 +208,9 @@ public class CheckoutPublicController {
         respuesta.put("estado","PENDIENTE");
         respuesta.put("estadoPago","PENDIENTE");
         respuesta.put("metodoPago",metodo);
-        respuesta.put("totalProductos",subtotal);
+        respuesta.put("totalProductos",totalConDescuento);
+        respuesta.put("subtotal",subtotal);
+        respuesta.put("descuentoTotal",descuentoTotal);
         respuesta.put("envio","POR_COORDINAR");
         respuesta.put("reservaHoras",24);
         return ResponseEntity.status(HttpStatus.CREATED).body(respuesta);
@@ -285,5 +302,6 @@ public class CheckoutPublicController {
                 MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) { throw new IllegalStateException("SHA-256 no disponible",e); }
     }
-    private record Linea(UUID id,String sku,String nombre,BigDecimal precio,int stock,int cantidad){}
+    private record Linea(UUID id,String sku,String nombre,BigDecimal precio,
+                         BigDecimal rebaja,int stock,int cantidad){}
 }

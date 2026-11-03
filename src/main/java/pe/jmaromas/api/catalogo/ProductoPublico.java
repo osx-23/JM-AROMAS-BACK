@@ -13,5 +13,8 @@ public record ProductoPublico(
         BigDecimal precio,
         boolean disponible,
         String categoria,
-        List<String> imagenes
+        List<String> imagenes,
+        BigDecimal precioAnterior,
+        String publicoObjetivo,
+        Integer contenidoMl
 ) {}
