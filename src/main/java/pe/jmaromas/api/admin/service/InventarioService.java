@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Pattern;
+import pe.jmaromas.api.admin.domain.CodigoBarras;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -20,8 +20,6 @@ import jakarta.servlet.http.HttpServletRequest;
 @Service
 public class InventarioService {
     private final JdbcTemplate jdbc;
-    private static final Pattern CODIGO = Pattern.compile("[A-Z0-9._-]{4,64}");
-    private static final Pattern SOLO_DIGITOS = Pattern.compile("[0-9]+");
 
     public InventarioService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -47,7 +45,7 @@ public class InventarioService {
     }
 
     public ResponseEntity<Map<String,Object>> buscar(String codigo) {
-        String canonico = codigoNormalizado(codigo);
+        String canonico = CodigoBarras.normalizar(codigo);
         List<Map<String,Object>> rows = jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
                    p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
@@ -62,7 +60,7 @@ public class InventarioService {
 
     @Transactional
     public ResponseEntity<Map<String,Object>> registrar(Registro data, HttpServletRequest request) {
-        String codigo = codigoNormalizado(data.codigoBarras());
+        String codigo = CodigoBarras.normalizar(data.codigoBarras());
         if (data.nombre() == null || data.nombre().isBlank() || data.nombre().length() > 160
                 || data.precio() == null || data.precio().signum() < 0
                 || data.stock() == null || data.stock() < 0 || data.stock() > 1000000) {
@@ -112,7 +110,7 @@ public class InventarioService {
     @Transactional
     public ResponseEntity<Map<String,Object>> editar(UUID id,Edicion data) {
         if(data==null)throw new IllegalArgumentException("Datos del producto requeridos");
-        String codigo=codigoNormalizado(data.codigoBarras());
+        String codigo=CodigoBarras.normalizar(data.codigoBarras());
         if(data.nombre()==null || data.nombre().isBlank() || data.nombre().length()>160 ||
            data.precio()==null || data.precio().signum()<0 ||
            data.precio().scale()>2 || data.precio().precision()>12)
@@ -213,26 +211,5 @@ public class InventarioService {
 
     private static String blankToNull(String text) {
         return text == null || text.isBlank() ? null : text.strip();
-    }
-    private static String codigoNormalizado(String text) {
-        if (text == null) throw new IllegalArgumentException("Código requerido");
-        String codigo = text.strip().toUpperCase(Locale.ROOT);
-        if (SOLO_DIGITOS.matcher(codigo).matches() && codigo.length() == 12)
-            codigo = "0" + codigo; // UPC-A y EAN-13 con cero inicial se refieren al mismo GTIN.
-        if (!CODIGO.matcher(codigo).matches())
-            throw new IllegalArgumentException("Formato no admitido");
-        if (SOLO_DIGITOS.matcher(codigo).matches()) {
-            if (!(codigo.length() == 8 || codigo.length() == 13 || codigo.length() == 14)
-                    || !checksumGtin(codigo))
-                throw new IllegalArgumentException("GTIN sin dígito verificador válido");
-        }
-        return codigo;
-    }
-    private static boolean checksumGtin(String value) {
-        int suma = 0;
-        for (int i = value.length() - 2, p = 0; i >= 0; i--, p++) {
-            suma += (value.charAt(i) - '0') * (p % 2 == 0 ? 3 : 1);
-        }
-        return (10 - (suma % 10)) % 10 == value.charAt(value.length()-1) - '0';
     }
 }
