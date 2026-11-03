@@ -36,9 +36,11 @@ public class InventarioController {
     @GetMapping
     public List<Map<String, Object>> listar() {
         return jdbc.queryForList("""
-            select id, codigo_barras as "codigoBarras", sku, nombre, marca, descripcion,
-                   categoria_id as "categoriaId", precio, stock, activo, publicado
-            from public.productos order by creado_en desc limit 100
+            select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
+                   p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   (select i.ruta_storage from public.imagenes_producto i
+                    where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
+            from public.productos p order by p.creado_en desc limit 100
             """);
     }
 
@@ -46,9 +48,11 @@ public class InventarioController {
     public ResponseEntity<Map<String,Object>> buscar(@PathVariable String codigo) {
         String canonico = codigoNormalizado(codigo);
         List<Map<String,Object>> rows = jdbc.queryForList("""
-            select id, codigo_barras as "codigoBarras", sku, nombre, marca, descripcion,
-                   categoria_id as "categoriaId", precio, stock, activo, publicado
-            from public.productos where codigo_barras = ? limit 1
+            select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
+                   p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   (select i.ruta_storage from public.imagenes_producto i
+                    where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
+            from public.productos p where p.codigo_barras = ? limit 1
             """, canonico);
         return rows.isEmpty() ? ResponseEntity.notFound().build() : ResponseEntity.ok(rows.getFirst());
     }
