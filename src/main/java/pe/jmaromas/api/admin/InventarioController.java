@@ -30,7 +30,8 @@ public class InventarioController {
 
     public record Registro(String codigoBarras, String nombre, String sku,
                            String marca, String descripcion, UUID categoriaId,
-                           BigDecimal precio, Integer stock) {}
+                           BigDecimal precio, Integer stock,
+                           String publicoObjetivo, Integer contenidoMl) {}
     public record IngresoStock(Integer cantidad, String motivo) {}
 
     @GetMapping
@@ -38,6 +39,7 @@ public class InventarioController {
         return jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
                    p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
             from public.productos p order by p.creado_en desc limit 100
@@ -50,6 +52,7 @@ public class InventarioController {
         List<Map<String,Object>> rows = jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
                    p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
             from public.productos p where p.codigo_barras = ? limit 1
@@ -71,17 +74,19 @@ public class InventarioController {
         if (sku.length() > 90 || sku.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "SKU inválido"));
         }
+        validarPresentacion(data.publicoObjetivo(),data.contenidoMl());
         UUID id = UUID.randomUUID();
         String slug = "producto-" + id.toString();
         try {
             int rows = jdbc.update("""
                 insert into public.productos
                     (id, codigo_barras, sku, slug, nombre, marca, descripcion, categoria_id,
-                     precio, stock, activo, publicado)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, false)
+                     precio, stock, publico_objetivo, contenido_ml, activo, publicado)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, false)
                 """, id, codigo, sku, slug, data.nombre().strip(),
                 blankToNull(data.marca()), blankToNull(data.descripcion()),
-                data.categoriaId(), data.precio(), data.stock());
+                data.categoriaId(), data.precio(), data.stock(),
+                data.publicoObjetivo(),data.contenidoMl());
             if (rows != 1) throw new IllegalStateException("No se insertó el producto");
             if (data.stock() > 0) {
                 jdbc.update("""
@@ -97,6 +102,60 @@ public class InventarioController {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                 "error", "Código de barras o SKU ya registrado. Consulta el producto antes de continuar."));
         }
+    }
+
+
+    /** Stock no se modifica aquí: usar /stock para mantener movimientos auditables. */
+    public record Edicion(String codigoBarras,String sku,String nombre,
+                          String marca,String descripcion,BigDecimal precio,
+                          String publicoObjetivo,Integer contenidoMl) {}
+
+    @PatchMapping("/{id}")
+    @Transactional
+    public ResponseEntity<Map<String,Object>> editar(@PathVariable UUID id,@RequestBody Edicion data) {
+        if(data==null)throw new IllegalArgumentException("Datos del producto requeridos");
+        String codigo=codigoNormalizado(data.codigoBarras());
+        if(data.nombre()==null || data.nombre().isBlank() || data.nombre().length()>160 ||
+           data.precio()==null || data.precio().signum()<0 ||
+           data.precio().scale()>2 || data.precio().precision()>12)
+            throw new IllegalArgumentException("Nombre o precio inválidos");
+        if(data.sku()==null || data.sku().isBlank() || data.sku().length()>90)
+            throw new IllegalArgumentException("SKU inválido");
+        if(data.marca()!=null && data.marca().length()>160)
+            throw new IllegalArgumentException("Marca demasiado larga");
+        if(data.descripcion()!=null && data.descripcion().length()>4000)
+            throw new IllegalArgumentException("Descripción demasiado larga");
+        validarPresentacion(data.publicoObjetivo(),data.contenidoMl());
+        List<Integer> existentes=jdbc.query("select stock from public.productos where id=? for update",
+            (rs,n)->rs.getInt(1),id);
+        if(existentes.isEmpty())return ResponseEntity.notFound().build();
+        Boolean imposible=jdbc.queryForObject("""
+            select exists(select 1 from public.descuentos
+              where producto_id=? and activo=true and tipo='MONTO' and valor>=?)
+            """,Boolean.class,id,data.precio());
+        if(Boolean.TRUE.equals(imposible))
+            throw new IllegalArgumentException(
+                "El precio debe superar el descuento fijo activo. Desactívalo primero.");
+        try {
+            jdbc.update("""
+                update public.productos set codigo_barras=?,sku=?,nombre=?,marca=?,
+                descripcion=?,precio=?,publico_objetivo=?,contenido_ml=?,actualizado_en=now()
+                where id=?
+                """,codigo,data.sku().strip().toUpperCase(Locale.ROOT),
+                data.nombre().strip(),blankToNull(data.marca()),blankToNull(data.descripcion()),
+                data.precio(),data.publicoObjetivo(),data.contenidoMl(),id);
+        }catch(DataIntegrityViolationException e){
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                Map.of("error","Este código de barras o SKU ya existe"));
+        }
+        return ResponseEntity.ok(Map.of("id",id,"mensaje","Producto actualizado"));
+    }
+
+    private static void validarPresentacion(String publico,Integer ml) {
+        if(publico!=null && !List.of("HOMBRE","MUJER","UNISEX").contains(publico))
+            throw new IllegalArgumentException("Selecciona hombre, mujer o unisex");
+        if(ml!=null && (ml<1 || ml>2000))
+            throw new IllegalArgumentException("La presentación debe ser entre 1 y 2000 ml");
     }
 
     public record Publicacion(boolean publicado) {}
