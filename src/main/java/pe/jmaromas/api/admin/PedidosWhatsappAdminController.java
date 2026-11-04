@@ -42,6 +42,48 @@ public class PedidosWhatsappAdminController {
 
     public record EstadoForm(String estado, String observacion) {}
 
+    public record PagoVerificado(Boolean confirmado, String observacion) {}
+
+    /**
+     * El admin registra un cobro REAL verificado por fuera de WhatsApp.
+     * Nunca supone que enviar un mensaje equivale a pagar.
+     */
+    @PatchMapping("/{id}/pago-verificado")
+    @Transactional
+    public ResponseEntity<Map<String,Object>> verificarPago(@PathVariable UUID id,
+            @RequestBody PagoVerificado form,HttpServletRequest request) {
+        if(form==null || !Boolean.TRUE.equals(form.confirmado()))
+            throw new IllegalArgumentException("Debes confirmar expresamente que el pago fue recibido");
+        List<Map<String,Object>> pedidos=jdbc.queryForList("""
+            select estado,estado_pago from public.pedidos
+            where id=? and metodo_pago='COORDINAR_WHATSAPP' for update
+            """,id);
+        if(pedidos.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "Pedido inexistente");
+        String estado=(String)pedidos.getFirst().get("estado");
+        String estadoPago=(String)pedidos.getFirst().get("estado_pago");
+        if(List.of("CANCELADO","ENTREGADO").contains(estado) ||
+            !"PENDIENTE".equals(estadoPago))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "El pedido ya se pagó, fue cancelado o no admite confirmación");
+        UUID admin=(UUID)request.getAttribute("adminUserId");
+        String observacion=form.observacion()==null?"":form.observacion().strip();
+        if(observacion.length()>300)observacion=observacion.substring(0,300);
+        jdbc.update("""
+            update public.pedidos set estado_pago='PAGADO',
+             confirmado_pago_por=?,confirmacion_pago_en=now(),actualizado_en=now()
+            where id=?
+            """,admin,id);
+        jdbc.update("""
+            insert into public.historial_pedido(
+              pedido_id,estado_anterior,estado_nuevo,observacion,actualizado_por)
+            values(?,?,?,?,?)
+            """,id,estado,estado,
+            "Pago externo confirmado manualmente"+(observacion.isEmpty()?"":": "+observacion),admin);
+        return ResponseEntity.ok(Map.of("estadoPago","PAGADO"));
+    }
+
+
     @PatchMapping("/{id}/estado")
     @Transactional
     public ResponseEntity<Map<String,Object>> actualizar(

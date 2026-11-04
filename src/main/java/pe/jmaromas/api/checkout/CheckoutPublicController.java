@@ -68,7 +68,9 @@ public class CheckoutPublicController {
           select id, tipo, titulo, titular, numero_yape, qr_url, banco,
                  numero_cuenta, cci, telefono_whatsapp
           from app_private.medios_pago
-          where activo=true order by tipo, orden, creado_en
+          where activo=true
+            and ((tipo='WHATSAPP' and ?) or (tipo in ('YAPE','TRANSFERENCIA') and ?))
+          order by tipo, orden, creado_en
           """,(rs, i)->{
             Map<String,Object> m=new LinkedHashMap<>();
             m.put("id",rs.getObject("id",UUID.class));
@@ -82,7 +84,7 @@ public class CheckoutPublicController {
             m.put("cci",rs.getString("cci"));
             m.put("telefonoWhatsApp",rs.getString("telefono_whatsapp"));
             return m;
-          });
+          },whatsappEnabled,checkoutEnabled);
     }
 
     @PostMapping("/pedidos")
