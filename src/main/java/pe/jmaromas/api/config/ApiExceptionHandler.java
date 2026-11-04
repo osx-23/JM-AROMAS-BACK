@@ -1,6 +1,7 @@
 package pe.jmaromas.api.config;
 
 import java.util.Map;
+import pe.jmaromas.api.checkout.CheckoutPublicController;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,7 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
  * Errores de validación en formato estable para Angular.
  * Nunca exponer stacktraces, SQL, cabeceras de autorización ni credenciales.
  */
-@RestControllerAdvice
+@RestControllerAdvice(assignableTypes = CheckoutPublicController.class)
 public class ApiExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String,String>> argumentoInvalido(IllegalArgumentException error) {
