@@ -74,13 +74,18 @@ public class PedidosWhatsappAdminController {
         if(form==null || !Boolean.TRUE.equals(form.confirmado()))
             throw new IllegalArgumentException("Debes confirmar expresamente que el pago fue recibido");
         List<Map<String,Object>> pedidos=jdbc.queryForList("""
-            select estado,estado_pago from public.pedidos
+            select estado,estado_pago,expira_en from public.pedidos
             where id=? and metodo_pago='COORDINAR_WHATSAPP' for update
             """,id);
         if(pedidos.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND,
             "Pedido inexistente");
         String estado=(String)pedidos.getFirst().get("estado");
         String estadoPago=(String)pedidos.getFirst().get("estado_pago");
+        if("PENDIENTE".equals(estado) &&
+            pedidos.getFirst().get("expira_en") instanceof java.sql.Timestamp expira &&
+            expira.toInstant().isBefore(java.time.Instant.now()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "La reserva venció; no se puede confirmar el pago");
         if(List.of("CANCELADO","ENTREGADO").contains(estado) ||
             !"PENDIENTE".equals(estadoPago))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -113,13 +118,18 @@ public class PedidosWhatsappAdminController {
              .contains(data.estado()))
             throw new IllegalArgumentException("Estado no válido");
         List<Map<String,Object>> p=jdbc.queryForList("""
-           select estado,estado_pago from public.pedidos
+           select estado,estado_pago,expira_en from public.pedidos
            where id=? and metodo_pago='COORDINAR_WHATSAPP' for update
            """,id);
         if(p.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,
             "Pedido de WhatsApp inexistente");
         String actual=(String)p.getFirst().get("estado");
         String nuevo=data.estado();
+        if("PENDIENTE".equals(actual) &&
+            p.getFirst().get("expira_en") instanceof java.sql.Timestamp expira &&
+            expira.toInstant().isBefore(java.time.Instant.now()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "La reserva del pedido ha vencido y debe cancelarse por expiración");
         if(actual.equals(nuevo))
             return ResponseEntity.ok(Map.of("estado",actual));
         boolean permitido=switch(actual) {
