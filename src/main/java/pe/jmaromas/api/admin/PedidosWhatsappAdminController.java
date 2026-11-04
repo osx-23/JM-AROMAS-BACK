@@ -90,7 +90,8 @@ public class PedidosWhatsappAdminController {
         if(observacion.length()>300)observacion=observacion.substring(0,300);
         jdbc.update("""
             update public.pedidos set estado_pago='PAGADO',
-             confirmado_pago_por=?,confirmacion_pago_en=now(),actualizado_en=now()
+             confirmado_pago_por=?,confirmacion_pago_en=now(),
+             expira_en=null,actualizado_en=now()
             where id=?
             """,admin,id);
         jdbc.update("""
@@ -130,6 +131,10 @@ public class PedidosWhatsappAdminController {
         };
         if(!permitido)throw new ResponseStatusException(HttpStatus.CONFLICT,
             "Transición de estado no permitida");
+        if("CANCELADO".equals(nuevo) &&
+            "PAGADO".equals(p.getFirst().get("estado_pago")))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "El pedido ya está pagado. Gestiona la devolución antes de cancelarlo");
         if("ENTREGADO".equals(nuevo) &&
             !"PAGADO".equals(p.getFirst().get("estado_pago"))) {
             // Entregar una venta no implica cobrarla. La confirmación de pago es otro proceso.

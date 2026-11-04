@@ -250,11 +250,25 @@ public class CheckoutPublicController {
     public Map<String,Object> consultar(@PathVariable UUID id,
         @RequestHeader(value="X-Pedido-Token",required=false) String token) {
         validarAccesoPedido(id,token);
-        return jdbc.queryForMap("""
-          select codigo,estado,estado_pago as "estadoPago",metodo_pago as "metodoPago",
-          total as "totalProductos", creado_en as "creadoEn", expira_en as "expiraEn"
-          from public.pedidos where id=?
-          """,id);
+        Map<String,Object> pedido=new LinkedHashMap<>(jdbc.queryForMap("""
+          select p.codigo,p.estado,p.estado_pago as "estadoPago",
+            p.metodo_pago as "metodoPago",p.total as "totalProductos",
+            p.creado_en as "creadoEn",p.expira_en as "expiraEn",
+            case when p.metodo_pago='COORDINAR_WHATSAPP' and m.activo
+                 then m.telefono_whatsapp else null end as "telefonoWhatsapp"
+          from public.pedidos p
+          left join app_private.medios_pago m on m.id=p.medio_pago_id
+          where p.id=?
+          """,id));
+        if("COORDINAR_WHATSAPP".equals(pedido.get("metodoPago"))) {
+            pedido.put("articulos",jdbc.queryForList("""
+              select nombre_snapshot as "nombre", cantidad,
+                     total_linea as "totalLinea"
+              from public.detalles_pedido where pedido_id=?
+              order by nombre_snapshot
+              """,id));
+        }
+        return pedido;
     }
 
     public void validarAccesoPedido(UUID id,String token) {
