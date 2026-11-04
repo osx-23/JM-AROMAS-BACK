@@ -235,12 +235,31 @@ public class CheckoutPublicController {
                 nombre=excluded.nombre,telefono=excluded.telefono,
                 dni=excluded.dni,actualizado_en=now()
                 """,usuario,c.nombre().strip(),c.telefono().strip(),c.dni());
-            jdbc.update("""
-                insert into public.direcciones
-                (usuario_id,destinatario,telefono,departamento,provincia,distrito,linea_direccion,referencia)
-                values(?,?,?,?,?,?,?,?)
-                """,usuario,c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
-                c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),limpiar(c.referencia()));
+            // Guardar una sola dirección principal por cuenta.
+            // El snapshot del pedido ya se conservó en public.pedidos, sin alterarse.
+            // Evita crear una nueva fila en cada compra del mismo usuario.
+            int direccionesActualizadas=jdbc.update("""
+                update public.direcciones set
+                  destinatario=?,telefono=?,departamento=?,provincia=?,distrito=?,
+                  linea_direccion=?,referencia=?,principal=true,actualizado_en=now()
+                where id=(
+                  select id from public.direcciones where usuario_id=?
+                  order by principal desc,actualizado_en desc,creado_en desc
+                  limit 1 for update
+                )
+                """,c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
+                c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),
+                limpiar(c.referencia()),usuario);
+            if(direccionesActualizadas==0) {
+                jdbc.update("""
+                    insert into public.direcciones
+                    (usuario_id,destinatario,telefono,departamento,provincia,distrito,
+                     linea_direccion,referencia,principal)
+                    values(?,?,?,?,?,?,?,?,true)
+                    """,usuario,c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
+                    c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),
+                    limpiar(c.referencia()));
+            }
         }
 
         Map<String,Object> respuesta=new LinkedHashMap<>();
