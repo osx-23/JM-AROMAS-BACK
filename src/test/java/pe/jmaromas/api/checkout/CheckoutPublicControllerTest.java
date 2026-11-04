@@ -59,4 +59,36 @@ class CheckoutPublicControllerTest {
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,error.getStatusCode());
         verifyNoInteractions(jdbc);
     }
+
+    @Test
+    void informaLaDireccionInvalidaAntesDeReservarStock() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(),eq(Boolean.class),any(UUID.class)))
+            .thenReturn(Boolean.FALSE);
+        var checkout=controlador(jdbc,false,true);
+        var cliente=new CheckoutPublicController.Cliente(
+            "Comprador Prueba","12345678","987654321","comprador@ejemplo.com",
+            "Lima","Lima","Miraflores","Av","sin referencia");
+        var solicitud=new CheckoutPublicController.PedidoSolicitud(
+            UUID.randomUUID(),"COORDINAR_WHATSAPP",null,cliente,List.of(),false);
+        var error=assertThrows(IllegalArgumentException.class,
+            () -> checkout.crear(solicitud,null));
+        assertTrue(error.getMessage().contains("Dirección"));
+    }
+
+    @Test
+    void informaLaProvinciaInvalidaAntesDeReservarStock() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(),eq(Boolean.class),any(UUID.class)))
+            .thenReturn(Boolean.FALSE);
+        var checkout=controlador(jdbc,false,true);
+        var cliente=new CheckoutPublicController.Cliente(
+            "Comprador Prueba","12345678","987654321","comprador@ejemplo.com",
+            "Lima","L","Miraflores","Avenida Principal 100",null);
+        var solicitud=new CheckoutPublicController.PedidoSolicitud(
+            UUID.randomUUID(),"COORDINAR_WHATSAPP",null,cliente,List.of(),false);
+        var error=assertThrows(IllegalArgumentException.class,
+            () -> checkout.crear(solicitud,null));
+        assertTrue(error.getMessage().contains("Provincia"));
+    }
 }
