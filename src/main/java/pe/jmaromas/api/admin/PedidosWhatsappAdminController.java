@@ -40,6 +40,25 @@ public class PedidosWhatsappAdminController {
           """);
     }
 
+
+    @GetMapping("/{id}/lineas")
+    public List<Map<String,Object>> lineas(@PathVariable UUID id) {
+        Boolean existe=jdbc.queryForObject("""
+            select exists(select 1 from public.pedidos
+             where id=? and metodo_pago='COORDINAR_WHATSAPP')
+            """,Boolean.class,id);
+        if(!Boolean.TRUE.equals(existe))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Pedido inexistente");
+        return jdbc.queryForList("""
+            select nombre_snapshot as "nombre",sku_snapshot as "sku",
+                   cantidad,precio_unitario as "precioOriginal",
+                   descuento_unitario as "descuentoUnitario",
+                   total_linea as "totalLinea"
+            from public.detalles_pedido where pedido_id=?
+            order by nombre_snapshot
+            """,id);
+    }
+
     public record EstadoForm(String estado, String observacion) {}
 
     public record PagoVerificado(Boolean confirmado, String observacion) {}
