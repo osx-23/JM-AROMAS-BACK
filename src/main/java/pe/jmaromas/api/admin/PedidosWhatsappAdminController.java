@@ -30,6 +30,10 @@ public class PedidosWhatsappAdminController {
                  p.cliente_snapshot->>'nombre' as "clienteNombre",
                  p.cliente_snapshot->>'telefono' as "clienteTelefono",
                  p.direccion_snapshot->>'distrito' as "distrito",
+                 p.direccion_snapshot->>'departamento' as "departamento",
+                 p.direccion_snapshot->>'provincia' as "provincia",
+                 p.direccion_snapshot->>'linea_direccion' as "direccion",
+                 p.direccion_snapshot->>'referencia' as "referencia",
                  (select coalesce(json_agg(json_build_object(
                      'nombre',l.nombre_snapshot,'cantidad',l.cantidad,
                      'total',l.total_linea) order by l.nombre_snapshot),'[]'::json)
