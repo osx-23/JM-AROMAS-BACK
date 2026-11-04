@@ -34,6 +34,9 @@ public class CheckoutPublicController {
     private final JdbcTemplate jdbc;
     @Value("${app.checkout.enabled:false}")
     private boolean checkoutEnabled;
+    // La coordinación por WhatsApp no habilita cobros web ni comprobantes.
+    @Value("${app.checkout.whatsapp-enabled:true}")
+    private boolean whatsappEnabled;
     private final RestClient auth;
     private final String publishableKey;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -54,6 +57,10 @@ public class CheckoutPublicController {
         String direccion, String referencia) {}
     public record PedidoSolicitud(UUID idempotencia, String metodoPago, UUID medioPagoId,
         Cliente cliente, List<Item> articulos, boolean guardarDatos) {}
+
+    /** Precios y artículos enviados por el servidor: el cliente no define los importes. */
+    public record ResumenArticulo(String nombre, String sku, int cantidad,
+                                  BigDecimal precioUnitario, BigDecimal totalLinea) {}
 
     @GetMapping("/medios-pago")
     public List<Map<String,Object>> mediosPago() {
@@ -82,9 +89,21 @@ public class CheckoutPublicController {
     @Transactional
     public ResponseEntity<Map<String,Object>> crear(@RequestBody PedidoSolicitud data,
          @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
-        if(!checkoutEnabled)
+        if(data==null) throw new IllegalArgumentException("Solicitud de pedido requerida");
+        boolean whatsapp="COORDINAR_WHATSAPP".equals(data.metodoPago());
+        if(whatsapp ? !whatsappEnabled : !checkoutEnabled)
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                "El checkout no está habilitado para ventas todavía");
+                whatsapp ? "Los pedidos por WhatsApp están temporalmente deshabilitados"
+                         : "Los pagos web todavía no están habilitados");
+        // Idempotencia antes de reservar stock: el mismo UUID jamás debe descontar 2 veces.
+        if(data.idempotencia()==null)
+            throw new IllegalArgumentException("Identificador de operación obligatorio");
+        Boolean duplicado=jdbc.queryForObject("""
+          select exists(select 1 from public.pedidos where idempotencia=?)
+          """,Boolean.class,data.idempotencia());
+        if(Boolean.TRUE.equals(duplicado))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Este pedido ya fue registrado. No vuelvas a generarlo; revisa el seguimiento.");
         Cliente c=data.cliente();
         validarCliente(c);
         if(data.idempotencia()==null) throw new IllegalArgumentException("Identificador de operación obligatorio");
@@ -95,6 +114,9 @@ public class CheckoutPublicController {
             throw new IllegalArgumentException("Método de pago no permitido");
         UUID idMedio=elegirMedio(metodo,data.medioPagoId());
         UUID usuario=usuarioOpcional(authorization);
+        // Ventana antifraude en PostgreSQL, compartida entre instancias de Railway.
+        // Lock por teléfono normalizado evita que múltiples solicitudes paralelas lo eludan.
+        if(whatsapp) limitarPedidosWhatsApp(c);
         Map<UUID,Integer> cantidades=new TreeMap<>();
         for(Item item:data.articulos()){
             if(item==null || item.productoId()==null || item.cantidad()==null ||
@@ -213,6 +235,12 @@ public class CheckoutPublicController {
         respuesta.put("descuentoTotal",descuentoTotal);
         respuesta.put("envio","POR_COORDINAR");
         respuesta.put("reservaHoras",24);
+        if(whatsapp) {
+            respuesta.put("articulos",lineas.stream().map(l -> new ResumenArticulo(
+                l.nombre(),l.sku(),l.cantidad(),l.precio().subtract(l.rebaja()),
+                l.precio().subtract(l.rebaja()).multiply(BigDecimal.valueOf(l.cantidad()))
+            )).toList());
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(respuesta);
     }
 
@@ -236,6 +264,27 @@ public class CheckoutPublicController {
            """,Boolean.class,id,sha256(token));
         if(!Boolean.TRUE.equals(valido))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"No autorizado para consultar este pedido");
+    }
+
+    private void limitarPedidosWhatsApp(Cliente cliente) {
+        String telefono=cliente.telefono().replaceAll("[^0-9]","");
+        if(telefono.length()<9 || telefono.length()>15)
+            throw new IllegalArgumentException("Indica un teléfono válido de 9 a 15 dígitos");
+        // Serialización de solicitudes del mismo número dentro de esta transacción.
+        jdbc.query("select pg_advisory_xact_lock(hashtextextended(?,0))",
+            (org.springframework.jdbc.core.RowCallbackHandler) rs -> {},telefono);
+        Map<String,Object> filas=jdbc.queryForMap("""
+            select count(*) filter (where creado_en >= now()-interval '1 hour') as hora,
+                   count(*) as dia
+            from public.pedidos
+            where creado_en >= now()-interval '24 hours'
+              and regexp_replace(cliente_snapshot->>'telefono','[^0-9]','','g')=?
+            """,telefono);
+        long hora=((Number)filas.get("hora")).longValue();
+        long dia=((Number)filas.get("dia")).longValue();
+        if(hora>=2 || dia>=5)
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                "Se alcanzó el límite de pedidos para este teléfono. Intenta más tarde.");
     }
 
     private UUID elegirMedio(String metodo,UUID id) {

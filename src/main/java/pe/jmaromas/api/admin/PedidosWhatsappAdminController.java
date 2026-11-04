@@ -1,0 +1,116 @@
+package pe.jmaromas.api.admin;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import jakarta.servlet.http.HttpServletRequest;
+
+/**
+ * Gestión manual de pedidos coordinados por WhatsApp.
+ * Las rutas /api/v1/admin/** ya exigen credenciales y rol ADMIN en AdminAuthFilter.
+ * "CONFIRMADO" significa aceptación comercial, NO que se haya recibido dinero.
+ */
+@RestController
+@RequestMapping("/api/v1/admin/pedidos-whatsapp")
+public class PedidosWhatsappAdminController {
+    private final JdbcTemplate jdbc;
+    public PedidosWhatsappAdminController(JdbcTemplate jdbc) {this.jdbc=jdbc;}
+
+    @GetMapping
+    public List<Map<String,Object>> listar() {
+        return jdbc.queryForList("""
+          select p.id,p.codigo,p.estado,p.estado_pago as "estadoPago",
+                 p.total,p.creado_en as "creadoEn",p.expira_en as "expiraEn",
+                 p.cliente_snapshot->>'nombre' as "clienteNombre",
+                 p.cliente_snapshot->>'telefono' as "clienteTelefono",
+                 p.direccion_snapshot->>'distrito' as "distrito",
+                 (select coalesce(json_agg(json_build_object(
+                     'nombre',l.nombre_snapshot,'cantidad',l.cantidad,
+                     'total',l.total_linea) order by l.nombre_snapshot),'[]'::json)
+                  from public.detalles_pedido l where l.pedido_id=p.id) as articulos
+          from public.pedidos p
+          where p.metodo_pago='COORDINAR_WHATSAPP'
+          order by p.creado_en desc limit 100
+          """);
+    }
+
+    public record EstadoForm(String estado, String observacion) {}
+
+    @PatchMapping("/{id}/estado")
+    @Transactional
+    public ResponseEntity<Map<String,Object>> actualizar(
+        @PathVariable UUID id,@RequestBody EstadoForm data,HttpServletRequest request) {
+        if(data==null || data.estado()==null ||
+           !List.of("CONTACTADO","CONFIRMADO","PREPARANDO","ENTREGADO","CANCELADO")
+             .contains(data.estado()))
+            throw new IllegalArgumentException("Estado no válido");
+        List<Map<String,Object>> p=jdbc.queryForList("""
+           select estado,estado_pago from public.pedidos
+           where id=? and metodo_pago='COORDINAR_WHATSAPP' for update
+           """,id);
+        if(p.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+            "Pedido de WhatsApp inexistente");
+        String actual=(String)p.getFirst().get("estado");
+        String nuevo=data.estado();
+        if(actual.equals(nuevo))
+            return ResponseEntity.ok(Map.of("estado",actual));
+        boolean permitido=switch(actual) {
+            case "PENDIENTE" -> List.of("CONTACTADO","CONFIRMADO","CANCELADO").contains(nuevo);
+            case "CONTACTADO" -> List.of("CONFIRMADO","CANCELADO").contains(nuevo);
+            case "CONFIRMADO" -> List.of("PREPARANDO","CANCELADO").contains(nuevo);
+            case "PREPARANDO" -> List.of("ENTREGADO","CANCELADO").contains(nuevo);
+            default -> false;
+        };
+        if(!permitido)throw new ResponseStatusException(HttpStatus.CONFLICT,
+            "Transición de estado no permitida");
+        if("ENTREGADO".equals(nuevo) &&
+            !"PAGADO".equals(p.getFirst().get("estado_pago"))) {
+            // Entregar una venta no implica cobrarla. La confirmación de pago es otro proceso.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "No se puede entregar como cobrado sin confirmar el pago");
+        }
+        UUID admin=(UUID)request.getAttribute("adminUserId");
+        if("CANCELADO".equals(nuevo)){
+            List<Map<String,Object>> lineas=jdbc.queryForList("""
+                select producto_id,cantidad from public.detalles_pedido
+                where pedido_id=? and producto_id is not null order by producto_id
+                """,id);
+            for(Map<String,Object> l:lineas) {
+                UUID producto=(UUID)l.get("producto_id");
+                int cantidad=((Number)l.get("cantidad")).intValue();
+                List<Integer> stocks=jdbc.query("select stock from public.productos where id=? for update",
+                    (rs,n)->rs.getInt(1),producto);
+                if(stocks.isEmpty())continue;
+                int anterior=stocks.getFirst();
+                int posterior=Math.addExact(anterior,cantidad);
+                jdbc.update("update public.productos set stock=?,actualizado_en=now() where id=?",
+                    posterior,producto);
+                jdbc.update("""
+                  insert into public.movimientos_stock
+                   (producto_id,pedido_id,cantidad_delta,stock_anterior,stock_nuevo,motivo)
+                  values(?,?,?,?,?,'PEDIDO_WHATSAPP_CANCELADO')
+                  """,producto,id,cantidad,anterior,posterior);
+            }
+        }
+        String observacion=data.observacion()==null?"":data.observacion().strip();
+        if(observacion.length()>300) observacion=observacion.substring(0,300);
+        jdbc.update("""
+          update public.pedidos set estado=?,expira_en=null,actualizado_en=now(),
+            estado_pago=case when ?='CANCELADO' then 'ANULADO' else estado_pago end
+          where id=?
+          """,nuevo,nuevo,id);
+        jdbc.update("""
+          insert into public.historial_pedido(
+            pedido_id,estado_anterior,estado_nuevo,observacion,actualizado_por)
+          values(?,?,?,?,?)
+          """,id,actual,nuevo,
+          "Gestión WhatsApp: "+(observacion.isBlank()?nuevo:observacion),admin);
+        return ResponseEntity.ok(Map.of("estado",nuevo));
+    }
+}
