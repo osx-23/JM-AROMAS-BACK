@@ -273,7 +273,19 @@ public class CheckoutPublicController {
             p.metodo_pago as "metodoPago",p.total as "totalProductos",
             p.creado_en as "creadoEn",p.expira_en as "expiraEn",
             case when p.metodo_pago='COORDINAR_WHATSAPP' and m.activo
-                 then m.telefono_whatsapp else null end as "telefonoWhatsapp"
+                 then m.telefono_whatsapp else null end as "telefonoWhatsapp",
+            case when p.metodo_pago='YAPE' and m.activo
+                 then m.numero_yape else null end as "numeroYape",
+            case when p.metodo_pago='YAPE' and m.activo
+                 then m.qr_url else null end as "qrUrl",
+            case when p.metodo_pago in ('YAPE','TRANSFERENCIA') and m.activo
+                 then m.titular else null end as "titular",
+            case when p.metodo_pago='TRANSFERENCIA' and m.activo
+                 then m.banco else null end as "banco",
+            case when p.metodo_pago='TRANSFERENCIA' and m.activo
+                 then m.numero_cuenta else null end as "numeroCuenta",
+            case when p.metodo_pago='TRANSFERENCIA' and m.activo
+                 then m.cci else null end as "cci"
           from public.pedidos p
           left join app_private.medios_pago m on m.id=p.medio_pago_id
           where p.id=?
