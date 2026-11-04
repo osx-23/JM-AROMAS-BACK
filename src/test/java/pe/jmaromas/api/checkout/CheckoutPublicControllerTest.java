@@ -17,10 +17,16 @@ import static org.mockito.Mockito.*;
 class CheckoutPublicControllerTest {
     private CheckoutPublicController controlador(JdbcTemplate jdbc,
                                                    boolean web,boolean whatsapp) {
+        return controlador(jdbc,web,whatsapp,false);
+    }
+
+    private CheckoutPublicController controlador(JdbcTemplate jdbc,
+        boolean legacy,boolean whatsapp,boolean manual) {
         CheckoutPublicController checkout=new CheckoutPublicController(
             jdbc,"https://example.supabase.co","public_test_key");
-        ReflectionTestUtils.setField(checkout,"checkoutEnabled",web);
+        ReflectionTestUtils.setField(checkout,"checkoutEnabled",legacy);
         ReflectionTestUtils.setField(checkout,"whatsappEnabled",whatsapp);
+        ReflectionTestUtils.setField(checkout,"manualPaymentsEnabled",manual);
         return checkout;
     }
 
@@ -46,6 +52,32 @@ class CheckoutPublicControllerTest {
             UUID.randomUUID(),"COORDINAR_WHATSAPP",null,null,List.of(),false);
         // El flag dejó pasar la solicitud: se evalúa la validación del cliente.
         assertThrows(IllegalArgumentException.class,() -> c.crear(solicitud,null));
+    }
+
+    @Test
+    void pagosManualesFuncionaConInterruptorLegadoDesactivado() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(),eq(Boolean.class),any(UUID.class)))
+            .thenReturn(Boolean.FALSE);
+        var checkout=controlador(jdbc,false,true,true);
+        var solicitud=new CheckoutPublicController.PedidoSolicitud(
+            UUID.randomUUID(),"YAPE",null,null,List.of(),false);
+        // No se rechaza por el flag: llega hasta las validaciones del cliente.
+        var error=assertThrows(IllegalArgumentException.class,
+            () -> checkout.crear(solicitud,null));
+        assertTrue(error.getMessage().contains("contacto"));
+    }
+
+    @Test
+    void pagosManualesDesactivadosSiguenBloqueados() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        var checkout=controlador(jdbc,false,true,false);
+        var solicitud=new CheckoutPublicController.PedidoSolicitud(
+            UUID.randomUUID(),"TRANSFERENCIA",null,null,List.of(),false);
+        var error=assertThrows(ResponseStatusException.class,
+            () -> checkout.crear(solicitud,null));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE,error.getStatusCode());
+        verifyNoInteractions(jdbc);
     }
 
     @Test

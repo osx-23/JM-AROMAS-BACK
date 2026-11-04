@@ -37,6 +37,14 @@ public class CheckoutPublicController {
     // La coordinación por WhatsApp no habilita cobros web ni comprobantes.
     @Value("${app.checkout.whatsapp-enabled:true}")
     private boolean whatsappEnabled;
+    // Yape y transferencia manuales, independientes del interruptor legado de checkout.
+    // Solo se exponen cuentas reales y activas; nunca se cobra sin revisión humana.
+    @Value("${app.checkout.manual-enabled:true}")
+    private boolean manualPaymentsEnabled;
+
+    private boolean pagosManualesDisponibles() {
+        return checkoutEnabled || manualPaymentsEnabled;
+    }
     private final RestClient auth;
     private final String publishableKey;
     private final SecureRandom secureRandom = new SecureRandom();
@@ -69,7 +77,17 @@ public class CheckoutPublicController {
                  numero_cuenta, cci, telefono_whatsapp
           from app_private.medios_pago
           where activo=true
-            and ((tipo='WHATSAPP' and ?) or (tipo in ('YAPE','TRANSFERENCIA') and ?))
+            and (
+              (tipo='WHATSAPP' and ? and nullif(trim(telefono_whatsapp),'') is not null)
+              or (tipo='YAPE' and ?
+                  and nullif(trim(titular),'') is not null
+                  and nullif(trim(numero_yape),'') is not null
+                  and nullif(trim(qr_url),'') is not null)
+              or (tipo='TRANSFERENCIA' and ?
+                  and nullif(trim(titular),'') is not null
+                  and nullif(trim(banco),'') is not null
+                  and nullif(trim(numero_cuenta),'') is not null)
+            )
           order by tipo, orden, creado_en
           """,(rs, i)->{
             Map<String,Object> m=new LinkedHashMap<>();
@@ -84,7 +102,7 @@ public class CheckoutPublicController {
             m.put("cci",rs.getString("cci"));
             m.put("telefonoWhatsApp",rs.getString("telefono_whatsapp"));
             return m;
-          },whatsappEnabled,checkoutEnabled);
+          },whatsappEnabled,pagosManualesDisponibles(),pagosManualesDisponibles());
     }
 
     @PostMapping("/pedidos")
@@ -93,10 +111,10 @@ public class CheckoutPublicController {
          @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
         if(data==null) throw new IllegalArgumentException("Solicitud de pedido requerida");
         boolean whatsapp="COORDINAR_WHATSAPP".equals(data.metodoPago());
-        if(whatsapp ? !whatsappEnabled : !checkoutEnabled)
+        if(whatsapp ? !whatsappEnabled : !pagosManualesDisponibles())
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                 whatsapp ? "Los pedidos por WhatsApp están temporalmente deshabilitados"
-                         : "Los pagos web todavía no están habilitados");
+                         : "Yape y transferencia todavía no están habilitados");
         // Idempotencia antes de reservar stock: el mismo UUID jamás debe descontar 2 veces.
         if(data.idempotencia()==null)
             throw new IllegalArgumentException("Identificador de operación obligatorio");
@@ -116,9 +134,9 @@ public class CheckoutPublicController {
             throw new IllegalArgumentException("Método de pago no permitido");
         UUID idMedio=elegirMedio(metodo,data.medioPagoId());
         UUID usuario=usuarioOpcional(authorization);
-        // Ventana antifraude en PostgreSQL, compartida entre instancias de Railway.
-        // Lock por teléfono normalizado evita que múltiples solicitudes paralelas lo eludan.
-        if(whatsapp) limitarPedidosWhatsApp(c);
+        // Se aplica a WhatsApp, Yape y transferencia. El límite se comparte
+        // entre instancias para impedir saturación del inventario reservado.
+        limitarPedidosPorTelefono(c);
         Map<UUID,Integer> cantidades=new TreeMap<>();
         for(Item item:data.articulos()){
             if(item==null || item.productoId()==null || item.cantidad()==null ||
@@ -282,7 +300,7 @@ public class CheckoutPublicController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"No autorizado para consultar este pedido");
     }
 
-    private void limitarPedidosWhatsApp(Cliente cliente) {
+    private void limitarPedidosPorTelefono(Cliente cliente) {
         String telefono=cliente.telefono().replaceAll("[^0-9]","");
         if(telefono.length()<9 || telefono.length()>15)
             throw new IllegalArgumentException("Indica un teléfono válido de 9 a 15 dígitos");
@@ -317,7 +335,16 @@ public class CheckoutPublicController {
         }
         Boolean disponible=jdbc.queryForObject("""
           select exists(select 1 from app_private.medios_pago
-             where id=? and tipo=? and activo=true)
+            where id=? and tipo=? and activo=true
+              and (
+                (tipo='YAPE' and nullif(trim(titular),'') is not null
+                 and nullif(trim(numero_yape),'') is not null
+                 and nullif(trim(qr_url),'') is not null)
+                or (tipo='TRANSFERENCIA' and nullif(trim(titular),'') is not null
+                 and nullif(trim(banco),'') is not null
+                 and nullif(trim(numero_cuenta),'') is not null)
+                or (tipo='WHATSAPP' and nullif(trim(telefono_whatsapp),'') is not null)
+              ))
           """,Boolean.class,id,tipo);
         if(!Boolean.TRUE.equals(disponible))
             throw new IllegalArgumentException("Medio de pago deshabilitado");
