@@ -346,16 +346,25 @@ public class CheckoutPublicController {
     }
 
     private void validarCliente(Cliente c) {
-        if(c==null || !textoValido(c.nombre(),3,150) ||
-           c.dni()==null || !c.dni().matches("[0-9]{8}") ||
-           !textoValido(c.telefono(),8,20) ||
-           !textoValido(c.email(),5,160) || !c.email().contains("@") ||
-           !textoValido(c.departamento(),2,100) ||
-           !textoValido(c.provincia(),2,100) ||
-           !textoValido(c.distrito(),2,100) ||
-           !textoValido(c.direccion(),5,250) ||
-           (c.referencia()!=null && c.referencia().length()>250))
-            throw new IllegalArgumentException("Revisa nombre, DNI (8 dígitos), contacto y dirección");
+        if(c==null) throw new IllegalArgumentException("Completa los datos de contacto y entrega");
+        if(!textoValido(c.nombre(),3,150))
+            throw new IllegalArgumentException("Nombre: escribe entre 3 y 150 caracteres");
+        if(c.dni()==null || !c.dni().matches("[0-9]{8}"))
+            throw new IllegalArgumentException("DNI: debe contener exactamente 8 dígitos");
+        if(!textoValido(c.telefono(),8,20))
+            throw new IllegalArgumentException("Celular: escribe entre 8 y 20 caracteres");
+        if(!textoValido(c.email(),5,160) || !c.email().contains("@"))
+            throw new IllegalArgumentException("Correo: escribe una dirección de correo válida");
+        if(!textoValido(c.departamento(),2,100))
+            throw new IllegalArgumentException("Departamento: escribe al menos 2 caracteres");
+        if(!textoValido(c.provincia(),2,100))
+            throw new IllegalArgumentException("Provincia: escribe al menos 2 caracteres");
+        if(!textoValido(c.distrito(),2,100))
+            throw new IllegalArgumentException("Distrito: escribe al menos 2 caracteres");
+        if(!textoValido(c.direccion(),5,250))
+            throw new IllegalArgumentException("Dirección: escribe al menos 5 caracteres");
+        if(c.referencia()!=null && c.referencia().length()>250)
+            throw new IllegalArgumentException("Referencia: admite máximo 250 caracteres");
     }
     private boolean textoValido(String s,int min,int max) {
         return s!=null && s.strip().length()>=min && s.strip().length()<=max;
