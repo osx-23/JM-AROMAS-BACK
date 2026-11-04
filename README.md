@@ -12,7 +12,8 @@ Consulta [ARQUITECTURA_BACK.md](docs/ARQUITECTURA_BACK.md) para la estructura po
 - **Promociones:** descuentos porcentuales o de monto fijo con vigencia y sin solapamientos activos.
 - **Fotografías:** Supabase Storage, con subida/borrado autenticados y hasta cinco imágenes por producto.
 - **Cobros:** configuración de medios (Yape, transferencia y WhatsApp) y revisión de comprobantes.
-- **Checkout:** flujo de pedidos y reservas; permanece **desactivado por defecto** hasta completar pruebas de venta y seguridad.
+- **Checkout:** la coordinación por WhatsApp funciona con `CHECKOUT_WHATSAPP_ENABLED=true` (valor predeterminado), independientemente de `CHECKOUT_ENABLED=false`; los cobros web permanecen deshabilitados. El comprador debe pulsar **Enviar** en WhatsApp.
+- **Pedidos WhatsApp:** panel de gestión, reserva de stock de 24 h, límite por teléfono, estados, dirección de entrega y comprobación manual de pagos. Antes de abrir a tráfico real, completar CAPTCHA/WAF y pruebas end-to-end.
 
 La separación de capas es progresiva: catálogo usa Controller → Service → Repository. Inventario y descuentos ya separan Controller → Service; algunos servicios y controladores legacy aún tienen SQL y deben refactorizarse con pruebas adicionales.
 
