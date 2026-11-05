@@ -1,16 +1,11 @@
 package pe.jmaromas.api.checkout;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -21,45 +16,26 @@ import org.springframework.stereotype.Component;
 @Component
 public class CorreoPagoJob {
     private final JdbcTemplate jdbc;
-    private final JavaMailSender mailSender;
-    private final String smtpUsuario;
-    private final String smtpPassword;
+    private final CorreoTransaccional correo;
     private final String adminEmail;
-    private final String fromAddress;
     private final String frontUrl;
 
     public CorreoPagoJob(
         JdbcTemplate jdbc,
-        JavaMailSender mailSender,
-        @Value("${spring.mail.username:}") String smtpUsuario,
-        @Value("${spring.mail.password:}") String smtpPassword,
+        CorreoTransaccional correo,
         @Value("${app.email.admin-address:}") String adminEmail,
-        @Value("${app.email.from-address:}") String fromAddress,
         @Value("${app.email.front-url:http://localhost:4200}") String frontUrl
     ) {
         this.jdbc = jdbc;
-        this.mailSender = mailSender;
-        this.smtpUsuario = smtpUsuario;
-        this.smtpPassword = smtpPassword;
+        this.correo = correo;
         this.adminEmail = adminEmail;
-        this.fromAddress = fromAddress;
         this.frontUrl = frontUrl;
     }
 
     @Scheduled(fixedDelay = 60000, initialDelay = 10000)
     public void enviarPendientes() {
-        // Sin credenciales no se descartan los avisos.
-        if (smtpUsuario.isBlank() || smtpPassword.isBlank() ||
-            adminEmail.isBlank() || fromAddress.isBlank()) return;
-
-        InternetAddress remitente;
-        try {
-            remitente = new InternetAddress(fromAddress, true);
-            // Gmail debe enviar desde la misma cuenta que autentica el SMTP.
-            if (!smtpUsuario.equalsIgnoreCase(remitente.getAddress())) return;
-        } catch (Exception e) {
-            return;
-        }
+        // Sin remitente verificado, conservar avisos pendientes sin agotar reintentos.
+        if (adminEmail.isBlank() || !correo.configurado()) return;
 
         jdbc.update("""
           update app_private.notificaciones_pago
@@ -93,14 +69,9 @@ public class CorreoPagoJob {
                     "La captura enviada por el cliente NO confirma el abono.\n" +
                     "Abrir panel: " + frontUrl.replaceAll("/+$", "") + "/admin\n";
 
-                MimeMessage mensaje = mailSender.createMimeMessage();
-                MimeMessageHelper helper = new MimeMessageHelper(
-                    mensaje, false, StandardCharsets.UTF_8.name());
-                helper.setFrom(remitente);
-                helper.setTo(adminEmail);
-                helper.setSubject("JM-AROMAS | Revisar comprobante " + codigo);
-                helper.setText(texto, false);
-                mailSender.send(mensaje);
+                correo.enviar(adminEmail,
+                    "JM-AROMAS | Revisar comprobante " + codigo,
+                    texto, "jm-comprobante/" + id);
 
                 jdbc.update("""
                   update app_private.notificaciones_pago
@@ -111,7 +82,7 @@ public class CorreoPagoJob {
                 // Evitar exponer credenciales SMTP en los registros.
                 jdbc.update("""
                   update app_private.notificaciones_pago
-                  set estado='ERROR',ultimo_error='Error de envío SMTP Gmail',tomado_en=null
+                  set estado='ERROR',ultimo_error='Fallo al enviar correo transaccional',tomado_en=null
                   where id=?
                   """, id);
             }
