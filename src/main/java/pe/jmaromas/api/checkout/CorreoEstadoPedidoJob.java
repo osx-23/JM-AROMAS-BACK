@@ -1,16 +1,11 @@
 package pe.jmaromas.api.checkout;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,39 +17,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class CorreoEstadoPedidoJob {
     private final JdbcTemplate jdbc;
-    private final JavaMailSender mailSender;
-    private final String smtpUsuario;
-    private final String smtpPassword;
-    private final String fromAddress;
+    private final CorreoTransaccional correo;
     private final String frontUrl;
 
     public CorreoEstadoPedidoJob(
         JdbcTemplate jdbc,
-        JavaMailSender mailSender,
-        @Value("${spring.mail.username:}") String smtpUsuario,
-        @Value("${spring.mail.password:}") String smtpPassword,
-        @Value("${app.email.from-address:}") String fromAddress,
+        CorreoTransaccional correo,
         @Value("${app.email.front-url:https://jmaromas.shop}") String frontUrl
     ) {
         this.jdbc = jdbc;
-        this.mailSender = mailSender;
-        this.smtpUsuario = smtpUsuario;
-        this.smtpPassword = smtpPassword;
-        this.fromAddress = fromAddress;
+        this.correo = correo;
         this.frontUrl = frontUrl.replaceAll("/+$", "");
     }
 
     @Scheduled(fixedDelay = 60000, initialDelay = 15000)
     public void enviarPendientes() {
-        // El buzón conserva los eventos para reintentar cuando SMTP vuelva.
-        if (smtpUsuario.isBlank() || smtpPassword.isBlank() || fromAddress.isBlank()) return;
-        final InternetAddress remitente;
-        try {
-            remitente = new InternetAddress(fromAddress, true);
-            if (!smtpUsuario.equalsIgnoreCase(remitente.getAddress())) return;
-        } catch (Exception e) {
-            return;
-        }
+        // En Railway Hobby usar Resend HTTPS; sin remitente verificado no consumir intentos.
+        if (!correo.configurado()) return;
 
         // Recupera trabajos abandonados si el proceso se reinició a mitad del envío.
         jdbc.update("""
@@ -99,14 +78,7 @@ public class CorreoEstadoPedidoJob {
                     + "\n\nConsultas: responde a este correo o contacta a la tienda."
                     + "\nJM Aromas — " + frontUrl;
 
-                MimeMessage mensaje = mailSender.createMimeMessage();
-                MimeMessageHelper helper = new MimeMessageHelper(
-                    mensaje, false, StandardCharsets.UTF_8.name());
-                helper.setFrom(remitente);
-                helper.setTo(new InternetAddress(destinatario, true));
-                helper.setSubject(asunto);
-                helper.setText(texto, false);
-                mailSender.send(mensaje);
+                correo.enviar(destinatario, asunto, texto, "jm-estado/" + id);
 
                 jdbc.update("""
                     update app_private.notificaciones_estado_pedido
@@ -119,7 +91,7 @@ public class CorreoEstadoPedidoJob {
                 jdbc.update("""
                     update app_private.notificaciones_estado_pedido
                     set estado_envio='ERROR',tomado_en=null,
-                        ultimo_error='No se pudo entregar correo SMTP'
+                        ultimo_error='Fallo al enviar correo transaccional'
                     where id=?
                     """,id);
             }
