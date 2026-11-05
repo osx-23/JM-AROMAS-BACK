@@ -1,7 +1,7 @@
 name: Verificar backend
 on:
   push:
-    branches: ["feature/mvp-base"]
+    branches: ["main", "develop", "feature/mvp-base"]
   pull_request:
 jobs:
   build:
