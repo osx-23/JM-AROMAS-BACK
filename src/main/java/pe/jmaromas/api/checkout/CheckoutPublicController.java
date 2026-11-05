@@ -285,8 +285,9 @@ public class CheckoutPublicController {
 
     @GetMapping("/pedidos/{id}")
     public Map<String,Object> consultar(@PathVariable UUID id,
-        @RequestHeader(value="X-Pedido-Token",required=false) String token) {
-        validarAccesoPedido(id,token);
+        @RequestHeader(value="X-Pedido-Token",required=false) String token,
+        @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
+        validarAccesoPedido(id,token,authorization);
         Map<String,Object> pedido=new LinkedHashMap<>(jdbc.queryForMap("""
           select p.codigo,p.estado,p.estado_pago as "estadoPago",
             p.metodo_pago as "metodoPago",p.total as "totalProductos",
@@ -317,18 +318,43 @@ public class CheckoutPublicController {
               order by nombre_snapshot
               """,id));
         }
+        pedido.put("historial",jdbc.queryForList("""
+            select estado_anterior as "estadoAnterior",
+                   estado_nuevo as "estadoNuevo",observacion,
+                   creado_en as "creadoEn"
+              from public.historial_pedido
+             where pedido_id=?
+             order by creado_en desc
+             limit 30
+            """,id));
         return pedido;
     }
 
+    /** Acceso privado por token de invitado O por el dueño autenticado en Google.
+     * Nunca confiar en un usuario_id suministrado por el navegador.
+     */
     public void validarAccesoPedido(UUID id,String token) {
-        if(token==null || token.length()<32 || token.length()>256)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Token del pedido requerido");
-        Boolean valido=jdbc.queryForObject("""
-           select exists(select 1 from public.pedidos
-             where id=? and acceso_invitado_hash=?)
-           """,Boolean.class,id,sha256(token));
-        if(!Boolean.TRUE.equals(valido))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"No autorizado para consultar este pedido");
+        validarAccesoPedido(id,token,null);
+    }
+
+    public void validarAccesoPedido(UUID id,String token,String authorization) {
+        if(token!=null && token.length()>=32 && token.length()<=256) {
+            Boolean valido=jdbc.queryForObject("""
+                select exists(select 1 from public.pedidos
+                 where id=? and acceso_invitado_hash=?)
+                """,Boolean.class,id,sha256(token));
+            if(Boolean.TRUE.equals(valido)) return;
+        }
+        if(authorization!=null && !authorization.isBlank()) {
+            UUID usuario=usuarioOpcional(authorization); // Se valida contra Supabase Auth.
+            Boolean propio=jdbc.queryForObject("""
+                select exists(select 1 from public.pedidos
+                 where id=? and usuario_id=?)
+                """,Boolean.class,id,usuario);
+            if(Boolean.TRUE.equals(propio)) return;
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+            "No autorizado para consultar este pedido");
     }
 
     private void limitarPedidosPorTelefono(Cliente cliente) {
