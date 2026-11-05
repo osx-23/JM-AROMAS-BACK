@@ -5,6 +5,9 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.Duration;
+import java.sql.Timestamp;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -41,6 +44,10 @@ public class CheckoutPublicController {
     // Solo se exponen cuentas reales y activas; nunca se cobra sin revisión humana.
     @Value("${app.checkout.manual-enabled:true}")
     private boolean manualPaymentsEnabled;
+    // Solo permite excluir el límite a cuentas ADMIN con una solicitud de prueba explícita.
+    // Estos pedidos siguen reservando stock, se facturan como ventas normales y generan avisos.
+    @Value("${app.checkout.admin-test-mode:false}")
+    private boolean adminTestModeEnabled;
 
     private boolean pagosManualesDisponibles() {
         return checkoutEnabled || manualPaymentsEnabled;
@@ -108,7 +115,8 @@ public class CheckoutPublicController {
     @PostMapping("/pedidos")
     @Transactional
     public ResponseEntity<Map<String,Object>> crear(@RequestBody PedidoSolicitud data,
-         @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
+         @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization,
+         @RequestHeader(value="X-JM-Test-Order",required=false) String testOrder) {
         if(data==null) throw new IllegalArgumentException("Solicitud de pedido requerida");
         boolean whatsapp="COORDINAR_WHATSAPP".equals(data.metodoPago());
         if(whatsapp ? !whatsappEnabled : !pagosManualesDisponibles())
@@ -136,7 +144,9 @@ public class CheckoutPublicController {
         UUID usuario=usuarioOpcional(authorization);
         // Se aplica a WhatsApp, Yape y transferencia. El límite se comparte
         // entre instancias para impedir saturación del inventario reservado.
-        limitarPedidosPorTelefono(c);
+        boolean pruebaAdmin="true".equalsIgnoreCase(testOrder) && adminTestModeEnabled
+            && usuario!=null && esAdministrador(usuario);
+        if(!pruebaAdmin) limitarPedidosPorTelefono(c);
         Map<UUID,Integer> cantidades=new TreeMap<>();
         for(Item item:data.articulos()){
             if(item==null || item.productoId()==null || item.cantidad()==null ||
@@ -357,25 +367,69 @@ public class CheckoutPublicController {
             "No autorizado para consultar este pedido");
     }
 
-    private void limitarPedidosPorTelefono(Cliente cliente) {
+    private boolean esAdministrador(UUID usuario) {
+        // El rol se determina en el servidor, jamás desde un flag del cliente.
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+            select exists(select 1 from app_private.administradores where usuario_id=?)
+            """,Boolean.class,usuario));
+    }
+
+    void limitarPedidosPorTelefono(Cliente cliente) {
         String telefono=cliente.telefono().replaceAll("[^0-9]","");
         if(telefono.length()<9 || telefono.length()>15)
             throw new IllegalArgumentException("Indica un teléfono válido de 9 a 15 dígitos");
-        // Serialización de solicitudes del mismo número dentro de esta transacción.
+
+        // Bloqueo transaccional por teléfono. Evita que solicitudes simultáneas
+        // superen los límites antes de crear la reserva de stock.
         jdbc.query("select pg_advisory_xact_lock(hashtextextended(?,0))",
             (org.springframework.jdbc.core.RowCallbackHandler) rs -> {},telefono);
+
+        // Se excluyen pedidos cancelados y reservas ya vencidas aunque el job
+        // de expiración todavía no haya actualizado su estado a CANCELADO.
+        // rn=5/20 representa el pedido que debe salir de cada ventana
+        // para permitir uno nuevo, incluso si existían más del límite.
         Map<String,Object> filas=jdbc.queryForMap("""
+            with elegibles as (
+              select creado_en from public.pedidos
+              where creado_en >= now()-interval '24 hours'
+                and regexp_replace(cliente_snapshot->>'telefono','[^0-9]','','g')=?
+                and estado <> 'CANCELADO'
+                and not (
+                  estado='PENDIENTE'
+                  and estado_pago in ('PENDIENTE','RECHAZADO')
+                  and expira_en is not null and expira_en <= now()
+                )
+            ), ordenados as (
+              select creado_en,row_number() over(order by creado_en desc) as rn
+              from elegibles
+            )
             select count(*) filter (where creado_en >= now()-interval '1 hour') as hora,
-                   count(*) as dia
-            from public.pedidos
-            where creado_en >= now()-interval '24 hours'
-              and regexp_replace(cliente_snapshot->>'telefono','[^0-9]','','g')=?
+                   count(*) as dia,
+                   max(creado_en) filter (where rn=5
+                     and creado_en >= now()-interval '1 hour') as "limiteHora",
+                   max(creado_en) filter (where rn=20) as "limiteDia"
+            from ordenados
             """,telefono);
+
         long hora=((Number)filas.get("hora")).longValue();
         long dia=((Number)filas.get("dia")).longValue();
-        if(hora>=2 || dia>=5)
+        if(hora>=5 || dia>=20) {
+            long minutosHora=hora>=5
+                ? minutosHastaLiberar(filas.get("limiteHora"),Duration.ofHours(1)) : 0;
+            long minutosDia=dia>=20
+                ? minutosHastaLiberar(filas.get("limiteDia"),Duration.ofHours(24)) : 0;
+            long espera=Math.max(minutosHora,minutosDia);
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                "Se alcanzó el límite de pedidos para este teléfono. Intenta más tarde.");
+                "Se alcanzó el máximo de 5 pedidos por hora o 20 en 24 horas para este teléfono. "
+                + "Puedes volver a intentar en aproximadamente " + espera
+                + (espera==1?" minuto.":" minutos."));
+        }
+    }
+
+    static long minutosHastaLiberar(Object corte, Duration ventana) {
+        if(!(corte instanceof Timestamp marca)) return 1;
+        long segundos=Duration.between(Instant.now(),marca.toInstant().plus(ventana)).getSeconds();
+        return Math.max(1,(segundos+59)/60);
     }
 
     private UUID elegirMedio(String metodo,UUID id) {
