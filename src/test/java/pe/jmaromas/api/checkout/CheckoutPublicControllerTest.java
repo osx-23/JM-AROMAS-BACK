@@ -1,6 +1,10 @@
 package pe.jmaromas.api.checkout;
 
 import java.util.List;
+import java.util.Map;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.Duration;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -37,7 +41,7 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"YAPE",null,null,List.of(),false);
         var error=assertThrows(ResponseStatusException.class,
-            () -> c.crear(solicitud,null));
+            () -> c.crear(solicitud,null,null));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,error.getStatusCode());
         verifyNoInteractions(jdbc);
     }
@@ -51,7 +55,7 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"COORDINAR_WHATSAPP",null,null,List.of(),false);
         // El flag dejó pasar la solicitud: se evalúa la validación del cliente.
-        assertThrows(IllegalArgumentException.class,() -> c.crear(solicitud,null));
+        assertThrows(IllegalArgumentException.class,() -> c.crear(solicitud,null,null));
     }
 
     @Test
@@ -64,7 +68,7 @@ class CheckoutPublicControllerTest {
             UUID.randomUUID(),"YAPE",null,null,List.of(),false);
         // No se rechaza por el flag: llega hasta las validaciones del cliente.
         var error=assertThrows(IllegalArgumentException.class,
-            () -> checkout.crear(solicitud,null));
+            () -> checkout.crear(solicitud,null,null));
         assertTrue(error.getMessage().contains("contacto"));
     }
 
@@ -75,7 +79,7 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"TRANSFERENCIA",null,null,List.of(),false);
         var error=assertThrows(ResponseStatusException.class,
-            () -> checkout.crear(solicitud,null));
+            () -> checkout.crear(solicitud,null,null));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,error.getStatusCode());
         verifyNoInteractions(jdbc);
     }
@@ -87,7 +91,7 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"COORDINAR_WHATSAPP",null,null,List.of(),false);
         var error=assertThrows(ResponseStatusException.class,
-            () -> c.crear(solicitud,null));
+            () -> c.crear(solicitud,null,null));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE,error.getStatusCode());
         verifyNoInteractions(jdbc);
     }
@@ -104,7 +108,7 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"COORDINAR_WHATSAPP",null,cliente,List.of(),false);
         var error=assertThrows(IllegalArgumentException.class,
-            () -> checkout.crear(solicitud,null));
+            () -> checkout.crear(solicitud,null,null));
         assertTrue(error.getMessage().contains("Dirección"));
     }
 
@@ -120,7 +124,68 @@ class CheckoutPublicControllerTest {
         var solicitud=new CheckoutPublicController.PedidoSolicitud(
             UUID.randomUUID(),"COORDINAR_WHATSAPP",null,cliente,List.of(),false);
         var error=assertThrows(IllegalArgumentException.class,
-            () -> checkout.crear(solicitud,null));
+            () -> checkout.crear(solicitud,null,null));
         assertTrue(error.getMessage().contains("Provincia"));
+    }
+
+    private CheckoutPublicController.Cliente clienteValido() {
+        return new CheckoutPublicController.Cliente(
+            "Cliente de Prueba","12345678","987654321","cliente@ejemplo.com",
+            "Lima","Lima","Lince","Jirón principal 123",null);
+    }
+
+    @Test
+    void permiteCuatroPedidosEnUnaHoraYDiecinueveEnElDia() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForMap(anyString(),eq("987654321")))
+            .thenReturn(Map.of("hora",4L,"dia",19L));
+        assertDoesNotThrow(() -> controlador(jdbc,false,true)
+            .limitarPedidosPorTelefono(clienteValido()));
+    }
+
+    @Test
+    void bloqueaDesdeElQuintoPedidoEnLaUltimaHoraYCalculaEspera() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForMap(anyString(),eq("987654321")))
+            .thenReturn(Map.of(
+                "hora",5L,"dia",5L,
+                "limiteHora",Timestamp.from(Instant.now().minus(Duration.ofMinutes(30)))
+            ));
+        ResponseStatusException e=assertThrows(ResponseStatusException.class,
+            () -> controlador(jdbc,false,true).limitarPedidosPorTelefono(clienteValido()));
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS,e.getStatusCode());
+        assertTrue(e.getReason().contains("5 pedidos por hora"));
+        assertTrue(e.getReason().contains("30 minutos"));
+    }
+
+    @Test
+    void bloqueaDesdeElVigesimoPedidoEnVentanaDeVeinticuatroHoras() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForMap(anyString(),eq("987654321")))
+            .thenReturn(Map.of("hora",1L,"dia",20L,
+                "limiteDia",Timestamp.from(Instant.now().minus(Duration.ofHours(23)))));
+        ResponseStatusException e=assertThrows(ResponseStatusException.class,
+            () -> controlador(jdbc,false,true).limitarPedidosPorTelefono(clienteValido()));
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS,e.getStatusCode());
+        assertTrue(e.getReason().contains("20 en 24 horas"));
+        assertTrue(e.getReason().contains("60 minutos"));
+    }
+
+    @Test
+    void queryExcluyePedidosCanceladosYReservasExpiradas() {
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForMap(anyString(),eq("987654321")))
+            .thenReturn(Map.of("hora",0L,"dia",0L));
+        controlador(jdbc,false,true).limitarPedidosPorTelefono(clienteValido());
+        org.mockito.ArgumentCaptor<String> sql=org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForMap(sql.capture(),eq("987654321"));
+        assertTrue(sql.getValue().contains("estado <> 'CANCELADO'"));
+        assertTrue(sql.getValue().contains("expira_en <= now()"));
+    }
+
+    @Test
+    void elCalculoDeEsperaNuncaDevuelveCero() {
+        assertEquals(1,CheckoutPublicController.minutosHastaLiberar(
+            Timestamp.from(Instant.now().minus(Duration.ofHours(2))),Duration.ofHours(1)));
     }
 }
