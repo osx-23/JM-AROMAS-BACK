@@ -50,7 +50,7 @@ begin
 
   correo := lower(btrim(new.cliente_snapshot->>'email'));
   if correo is null or length(correo) not between 6 and 254
-     or correo !~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$' then
+     or correo !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
     return new;
   end if;
 
