@@ -39,8 +39,9 @@ public class ComprobantePagoController {
     @Transactional
     public ResponseEntity<?> subir(@PathVariable UUID id,
         @RequestHeader(value="X-Pedido-Token",required=false) String token,
+        @RequestHeader(value=HttpHeaders.AUTHORIZATION,required=false) String authorization,
         @RequestParam("archivo") MultipartFile archivo) throws IOException {
-        checkout.validarAccesoPedido(id,token);
+        checkout.validarAccesoPedido(id,token,authorization);
         if(serviceRoleKey.isBlank()) throw new ResponseStatusException(
             HttpStatus.SERVICE_UNAVAILABLE,"Almacenamiento privado aún no configurado");
         if(archivo.isEmpty() || archivo.getSize()>5*1024*1024)
