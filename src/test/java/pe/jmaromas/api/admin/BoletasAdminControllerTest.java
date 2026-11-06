@@ -2,6 +2,7 @@ package pe.jmaromas.api.admin;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -26,7 +27,7 @@ class BoletasAdminControllerTest {
 
     private BoletasAdminController.RegistrarBoleta solicitud(String serie,int numero,boolean confirmado) {
         return new BoletasAdminController.RegistrarBoleta(
-            UUID.randomUUID(), serie, numero, LocalDate.now(), confirmado);
+            UUID.randomUUID(), serie, numero, LocalDate.now(ZoneId.of("America/Lima")), confirmado);
     }
 
     @Test
@@ -51,7 +52,7 @@ class BoletasAdminControllerTest {
         assertThrows(IllegalArgumentException.class,
             () -> controller.registrar(solicitud("XXX",3,true),request));
         var f=new BoletasAdminController.RegistrarBoleta(
-            UUID.randomUUID(),"EB01",3,LocalDate.now().plusDays(2),true);
+            UUID.randomUUID(),"EB01",3,LocalDate.now(ZoneId.of("America/Lima")).plusDays(2),true);
         assertThrows(IllegalArgumentException.class,() -> controller.registrar(f,request));
         verifyNoInteractions(jdbc);
     }
