@@ -20,6 +20,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -35,6 +36,7 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/v1/checkout")
 public class CheckoutPublicController {
     private final JdbcTemplate jdbc;
+    private final EntregaService entregaService;
     @Value("${app.checkout.enabled:false}")
     private boolean checkoutEnabled;
     // La coordinación por WhatsApp no habilita cobros web ni comprobantes.
@@ -56,22 +58,35 @@ public class CheckoutPublicController {
     private final String publishableKey;
     private final SecureRandom secureRandom = new SecureRandom();
 
+    @Autowired
     public CheckoutPublicController(
         JdbcTemplate jdbc,
         @Value("${app.supabase.url:https://gonhxfvelgxnjqpdyzpg.supabase.co}") String url,
-        @Value("${app.supabase.publishable-key:}") String publishableKey
+        @Value("${app.supabase.publishable-key:}") String publishableKey,
+        EntregaService entregaService
     ) {
+        this.entregaService=entregaService;
         this.jdbc=jdbc;
         this.publishableKey=publishableKey;
         this.auth=RestClient.builder().baseUrl(url).build();
     }
 
+    /** Constructor para compatibilidad con pruebas existentes. */
+    public CheckoutPublicController(JdbcTemplate jdbc,String url,String publishableKey) {
+        this(jdbc,url,publishableKey,new EntregaService());
+    }
     public record Item(UUID productoId, Integer cantidad) {}
     public record Cliente(String nombre, String dni, String telefono, String email,
         String departamento, String provincia, String distrito,
         String direccion, String referencia) {}
     public record PedidoSolicitud(UUID idempotencia, String metodoPago, UUID medioPagoId,
-        Cliente cliente, List<Item> articulos, boolean guardarDatos) {}
+        Cliente cliente, List<Item> articulos, boolean guardarDatos,
+        String metodoEntrega, String zonaEntregaId, String agenciaShalom) {
+        public PedidoSolicitud(UUID idempotencia,String metodoPago,UUID medioPagoId,
+            Cliente cliente,List<Item> articulos,boolean guardarDatos) {
+            this(idempotencia,metodoPago,medioPagoId,cliente,articulos,guardarDatos,null,null,null);
+        }
+    }
 
     /** Precios y artículos enviados por el servidor: el cliente no define los importes. */
     public record ResumenArticulo(String nombre, String sku, int cantidad,
@@ -156,6 +171,10 @@ public class CheckoutPublicController {
         }
         if(cantidades.size()>20 || cantidades.values().stream().anyMatch(v->v>30))
             throw new IllegalArgumentException("Límite de productos por pedido excedido");
+        int unidades = cantidades.values().stream().mapToInt(Integer::intValue).sum();
+        EntregaService.Cotizacion entrega = entregaService.cotizar(
+            data.metodoEntrega(),data.zonaEntregaId(),data.agenciaShalom(),
+            unidades,c.departamento(),c.distrito());
 
         List<Linea> lineas=new ArrayList<>();
         BigDecimal subtotal=BigDecimal.ZERO;
@@ -197,23 +216,26 @@ public class CheckoutPublicController {
         secureRandom.nextBytes(secreto);
         String token=Base64.getUrlEncoder().withoutPadding().encodeToString(secreto);
         String hash=sha256(token);
-        // Total de productos; costo de envío aún NO cotizado y por tanto no cobrado.
+        // Costo de entrega comercial, verificado por el servidor.
+        BigDecimal totalPedido=totalConDescuento.add(entrega.costo());
         jdbc.update("""
           insert into public.pedidos
           (id,codigo,usuario_id,idempotencia,cliente_snapshot,direccion_snapshot,
            metodo_pago,medio_pago_id,estado,estado_pago,
-           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba)
+           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba,
+           metodo_entrega,zona_entrega_id,agencia_shalom)
           values (?,?,?,?,
             jsonb_build_object('nombre',?,'dni',?,'telefono',?,'email',?),
             jsonb_build_object('destinatario',?,'telefono',?,'departamento',?,'provincia',?,
                                'distrito',?,'linea_direccion',?,'referencia',?),
-            ?,?,'PENDIENTE','PENDIENTE',?,?,0,?,?,now()+interval '24 hours',?)
+            ?,?,'PENDIENTE','PENDIENTE',?,?,?,?,?,now()+interval '24 hours',?,?,?,?)
           """,
           pedidoId,codigo,usuario,data.idempotencia(),
           c.nombre().strip(),c.dni(),c.telefono().strip(),c.email().strip().toLowerCase(Locale.ROOT),
           c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
           c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),limpiar(c.referencia()),
-          metodo,idMedio,subtotal,descuentoTotal,totalConDescuento,hash,pruebaAdmin);
+          metodo,idMedio,subtotal,descuentoTotal,entrega.costo(),totalPedido,hash,
+          pruebaAdmin,entrega.tipo(),entrega.zonaId(),entrega.agenciaId());
 
         for(Linea l:lineas){
             BigDecimal totalLinea=l.precio().subtract(l.rebaja())
@@ -282,7 +304,11 @@ public class CheckoutPublicController {
         respuesta.put("totalProductos",totalConDescuento);
         respuesta.put("subtotal",subtotal);
         respuesta.put("descuentoTotal",descuentoTotal);
-        respuesta.put("envio","POR_COORDINAR");
+        respuesta.put("costoEntrega",entrega.costo());
+        respuesta.put("totalPedido",totalPedido);
+        respuesta.put("metodoEntrega",entrega.tipo());
+        respuesta.put("descripcionEntrega",entrega.descripcion());
+        respuesta.put("envio",entrega.descripcion());
         respuesta.put("reservaHoras",24);
         if(whatsapp) {
             respuesta.put("articulos",lineas.stream().map(l -> new ResumenArticulo(
@@ -300,7 +326,11 @@ public class CheckoutPublicController {
         validarAccesoPedido(id,token,authorization);
         Map<String,Object> pedido=new LinkedHashMap<>(jdbc.queryForMap("""
           select p.codigo,p.estado,p.estado_pago as "estadoPago",
-            p.metodo_pago as "metodoPago",p.total as "totalProductos",
+            p.metodo_pago as "metodoPago",
+            (p.subtotal-p.descuento_total) as "totalProductos",
+            p.costo_entrega as "costoEntrega",p.total as "totalPedido",
+            p.metodo_entrega as "metodoEntrega",p.zona_entrega_id as "zonaEntregaId",
+            p.agencia_shalom as "agenciaShalom",
             p.creado_en as "creadoEn",p.expira_en as "expiraEn",
             case when p.metodo_pago='COORDINAR_WHATSAPP' and m.activo
                  then m.telefono_whatsapp else null end as "telefonoWhatsapp",
