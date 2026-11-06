@@ -331,6 +331,11 @@ public class CheckoutPublicController {
             p.costo_entrega as "costoEntrega",p.total as "totalPedido",
             p.metodo_entrega as "metodoEntrega",p.zona_entrega_id as "zonaEntregaId",
             p.agencia_shalom as "agenciaShalom",
+            case when p.metodo_entrega='SHALOM'
+                 then 'Recojo en Shalom: ' || split_part(p.agencia_shalom,'|',2)
+                 when p.metodo_entrega='DELIVERY_LIMA'
+                 then 'Delivery Lima y Callao: ' || coalesce(p.direccion_snapshot->>'distrito','')
+                 else 'Envío por coordinar' end as "descripcionEntrega",
             p.creado_en as "creadoEn",p.expira_en as "expiraEn",
             case when p.metodo_pago='COORDINAR_WHATSAPP' and m.activo
                  then m.telefono_whatsapp else null end as "telefonoWhatsapp",
