@@ -30,6 +30,7 @@ public class PedidosWhatsappAdminController {
                  p.metodo_entrega as "metodoEntrega",
                  p.agencia_shalom as "agenciaShalom",
                  p.zona_entrega_id as "zonaEntregaId",
+                 p.descripcion_entrega as "descripcionEntrega",
                  p.metodo_pago as "metodoPago",
                  p.creado_en as "creadoEn",p.expira_en as "expiraEn",
                  p.cliente_snapshot->>'nombre' as "clienteNombre",
