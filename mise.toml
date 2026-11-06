@@ -1,0 +1,4 @@
+# Version de Maven estable para JM Aromas en Railway (Railpack/Mise).
+# Evita resolver automaticamente Maven 3.10.0 durante cada despliegue.
+[tools]
+maven = "3.9.9"
