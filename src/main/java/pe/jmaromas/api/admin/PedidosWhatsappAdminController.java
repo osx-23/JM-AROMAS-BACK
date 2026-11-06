@@ -12,7 +12,7 @@ import org.springframework.web.server.ResponseStatusException;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * Gestión manual de pedidos coordinados por WhatsApp.
+ * Gestión administrativa de todos los pedidos, independientemente del medio de pago.
  * Las rutas /api/v1/admin/** ya exigen credenciales y rol ADMIN en AdminAuthFilter.
  * "CONFIRMADO" significa aceptación comercial, NO que se haya recibido dinero.
  */
@@ -26,7 +26,12 @@ public class PedidosWhatsappAdminController {
     public List<Map<String,Object>> listar() {
         return jdbc.queryForList("""
           select p.id,p.codigo,p.estado,p.estado_pago as "estadoPago",
-                 p.total,p.creado_en as "creadoEn",p.expira_en as "expiraEn",
+                 p.total,p.costo_entrega as "costoEntrega",
+                 p.metodo_entrega as "metodoEntrega",
+                 p.agencia_shalom as "agenciaShalom",
+                 p.zona_entrega_id as "zonaEntregaId",
+                 p.metodo_pago as "metodoPago",
+                 p.creado_en as "creadoEn",p.expira_en as "expiraEn",
                  p.cliente_snapshot->>'nombre' as "clienteNombre",
                  p.cliente_snapshot->>'telefono' as "clienteTelefono",
                  p.direccion_snapshot->>'distrito' as "distrito",
@@ -39,7 +44,6 @@ public class PedidosWhatsappAdminController {
                      'total',l.total_linea) order by l.nombre_snapshot),'[]'::json)
                   from public.detalles_pedido l where l.pedido_id=p.id) as articulos
           from public.pedidos p
-          where p.metodo_pago='COORDINAR_WHATSAPP'
           order by p.creado_en desc limit 100
           """);
     }
@@ -49,7 +53,7 @@ public class PedidosWhatsappAdminController {
     public List<Map<String,Object>> lineas(@PathVariable UUID id) {
         Boolean existe=jdbc.queryForObject("""
             select exists(select 1 from public.pedidos
-             where id=? and metodo_pago='COORDINAR_WHATSAPP')
+             where id=?)
             """,Boolean.class,id);
         if(!Boolean.TRUE.equals(existe))
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Pedido inexistente");
@@ -90,7 +94,7 @@ public class PedidosWhatsappAdminController {
             expira.toInstant().isBefore(java.time.Instant.now()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "La reserva venció; no se puede confirmar el pago");
-        if(List.of("CANCELADO","ENTREGADO").contains(estado) ||
+        if(List.of("CANCELADO","ENTREGADO","FINALIZADO").contains(estado) ||
             !"PENDIENTE".equals(estadoPago))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "El pedido ya se pagó, fue cancelado o no admite confirmación");
@@ -118,15 +122,15 @@ public class PedidosWhatsappAdminController {
     public ResponseEntity<Map<String,Object>> actualizar(
         @PathVariable UUID id,@RequestBody EstadoForm data,HttpServletRequest request) {
         if(data==null || data.estado()==null ||
-           !List.of("CONTACTADO","CONFIRMADO","PREPARANDO","ENTREGADO","CANCELADO")
+           !List.of("CONTACTADO","CONFIRMADO","PREPARANDO","EN_CAMINO","FINALIZADO","CANCELADO")
              .contains(data.estado()))
             throw new IllegalArgumentException("Estado no válido");
         List<Map<String,Object>> p=jdbc.queryForList("""
            select estado,estado_pago,expira_en from public.pedidos
-           where id=? and metodo_pago='COORDINAR_WHATSAPP' for update
+           where id=? for update
            """,id);
         if(p.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,
-            "Pedido de WhatsApp inexistente");
+            "Pedido inexistente");
         String actual=(String)p.getFirst().get("estado");
         String nuevo=data.estado();
         if("PENDIENTE".equals(actual) &&
@@ -140,7 +144,8 @@ public class PedidosWhatsappAdminController {
             case "PENDIENTE" -> List.of("CONTACTADO","CONFIRMADO","CANCELADO").contains(nuevo);
             case "CONTACTADO" -> List.of("CONFIRMADO","CANCELADO").contains(nuevo);
             case "CONFIRMADO" -> List.of("PREPARANDO","CANCELADO").contains(nuevo);
-            case "PREPARANDO" -> List.of("ENTREGADO","CANCELADO").contains(nuevo);
+            case "PREPARANDO" -> List.of("EN_CAMINO","CANCELADO").contains(nuevo);
+            case "EN_CAMINO" -> "FINALIZADO".equals(nuevo);
             default -> false;
         };
         if(!permitido)throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -149,11 +154,11 @@ public class PedidosWhatsappAdminController {
             "PAGADO".equals(p.getFirst().get("estado_pago")))
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "El pedido ya está pagado. Gestiona la devolución antes de cancelarlo");
-        if("ENTREGADO".equals(nuevo) &&
+        if(List.of("EN_CAMINO","FINALIZADO").contains(nuevo) &&
             !"PAGADO".equals(p.getFirst().get("estado_pago"))) {
             // Entregar una venta no implica cobrarla. La confirmación de pago es otro proceso.
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "No se puede entregar como cobrado sin confirmar el pago");
+                "No se puede despachar o finalizar sin confirmar el pago");
         }
         UUID admin=(UUID)request.getAttribute("adminUserId");
         if("CANCELADO".equals(nuevo)){
@@ -174,7 +179,7 @@ public class PedidosWhatsappAdminController {
                 jdbc.update("""
                   insert into public.movimientos_stock
                    (producto_id,pedido_id,cantidad_delta,stock_anterior,stock_nuevo,motivo)
-                  values(?,?,?,?,?,'PEDIDO_WHATSAPP_CANCELADO')
+                  values(?,?,?,?,?,'PEDIDO_CANCELADO')
                   """,producto,id,cantidad,anterior,posterior);
             }
         }
@@ -190,7 +195,7 @@ public class PedidosWhatsappAdminController {
             pedido_id,estado_anterior,estado_nuevo,observacion,actualizado_por)
           values(?,?,?,?,?)
           """,id,actual,nuevo,
-          "Gestión WhatsApp: "+(observacion.isBlank()?nuevo:observacion),admin);
+          "Gestión administrativa: "+(observacion.isBlank()?nuevo:observacion),admin);
         return ResponseEntity.ok(Map.of("estado",nuevo));
     }
 }
