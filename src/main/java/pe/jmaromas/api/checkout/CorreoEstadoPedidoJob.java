@@ -110,8 +110,9 @@ public class CorreoEstadoPedidoJob {
             case "PENDIENTE" -> "Pendiente";
             case "CONTACTADO" -> "En coordinación";
             case "CONFIRMADO" -> "Confirmado";
-            case "PREPARANDO" -> "En preparación";
-            case "ENTREGADO" -> "Entregado";
+            case "PREPARANDO" -> "Pedido en preparación";
+            case "EN_CAMINO" -> "Pedido en camino";
+            case "FINALIZADO", "ENTREGADO" -> "Pedido finalizado";
             case "CANCELADO" -> "Cancelado";
             default -> "En revisión";
         };
@@ -139,8 +140,12 @@ public class CorreoEstadoPedidoJob {
         if ("PENDIENTE_CONFIRMACION".equals(pago)) {
             return "Recibimos tu comprobante. El equipo comprobará el abono antes de confirmarlo.";
         }
-        if ("ENTREGADO".equals(estado)) return "Tu pedido figura como entregado. Gracias por elegirnos.";
-        if ("PREPARANDO".equals(estado)) return "Tu pedido está en preparación. Te avisaremos cuando cambie su estado.";
+        if ("FINALIZADO".equals(estado) || "ENTREGADO".equals(estado))
+            return "Tu pedido ha finalizado. Gracias por elegirnos.";
+        if ("EN_CAMINO".equals(estado))
+            return "Tu pedido ya está en camino o fue despachado a la agencia elegida. Revisa el seguimiento de tu pedido.";
+        if ("PREPARANDO".equals(estado))
+            return "Tu pedido está en preparación. Te avisaremos cuando cambie su estado.";
         if ("PAGADO".equals(pago)) return "El pago fue verificado. La tienda continuará gestionando tu pedido.";
         return "Puedes revisar el seguimiento de tu pedido y consultar cualquier duda con la tienda.";
     }
