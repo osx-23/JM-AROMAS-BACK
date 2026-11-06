@@ -35,6 +35,27 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/checkout")
 public class CheckoutPublicController {
+    // Parámetros polimórficos de jsonb_build_object deben tener tipo explícito.
+    // Una referencia de dirección opcional suele llegar como NULL a JDBC y,
+    // sin CAST, PostgreSQL rechaza el parámetro $15 como tipo desconocido (500).
+    static final String INSERTAR_PEDIDO_SQL = """
+          insert into public.pedidos
+          (id,codigo,usuario_id,idempotencia,cliente_snapshot,direccion_snapshot,
+           metodo_pago,medio_pago_id,estado,estado_pago,
+           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba,
+           metodo_entrega,zona_entrega_id,agencia_shalom,descripcion_entrega)
+          values (?,?,?,?,
+            jsonb_build_object(
+                'nombre',cast(? as text),'dni',cast(? as text),
+                'telefono',cast(? as text),'email',cast(? as text)),
+            jsonb_build_object(
+                'destinatario',cast(? as text),'telefono',cast(? as text),
+                'departamento',cast(? as text),'provincia',cast(? as text),
+                'distrito',cast(? as text),'linea_direccion',cast(? as text),
+                'referencia',cast(? as text)),
+            ?,?,'PENDIENTE','PENDIENTE',?,?,?,?,?,now()+interval '24 hours',?,?,?,?,?)
+          """;
+
     private final JdbcTemplate jdbc;
     private final EntregaService entregaService;
     @Value("${app.checkout.enabled:false}")
@@ -218,18 +239,7 @@ public class CheckoutPublicController {
         String hash=sha256(token);
         // Costo de entrega comercial, verificado por el servidor.
         BigDecimal totalPedido=totalConDescuento.add(entrega.costo());
-        jdbc.update("""
-          insert into public.pedidos
-          (id,codigo,usuario_id,idempotencia,cliente_snapshot,direccion_snapshot,
-           metodo_pago,medio_pago_id,estado,estado_pago,
-           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba,
-           metodo_entrega,zona_entrega_id,agencia_shalom,descripcion_entrega)
-          values (?,?,?,?,
-            jsonb_build_object('nombre',?,'dni',?,'telefono',?,'email',?),
-            jsonb_build_object('destinatario',?,'telefono',?,'departamento',?,'provincia',?,
-                               'distrito',?,'linea_direccion',?,'referencia',?),
-            ?,?,'PENDIENTE','PENDIENTE',?,?,?,?,?,now()+interval '24 hours',?,?,?,?,?)
-          """,
+        jdbc.update(INSERTAR_PEDIDO_SQL,
           pedidoId,codigo,usuario,data.idempotencia(),
           c.nombre().strip(),c.dni(),c.telefono().strip(),c.email().strip().toLowerCase(Locale.ROOT),
           c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
