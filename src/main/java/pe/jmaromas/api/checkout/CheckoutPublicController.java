@@ -259,40 +259,10 @@ public class CheckoutPublicController {
           values(?,'PENDIENTE','Pedido creado; stock reservado durante 24 horas')
           """,pedidoId);
 
-        if(usuario!=null && data.guardarDatos()){
-            jdbc.update("""
-                insert into public.perfiles(usuario_id,nombre,telefono,dni)
-                values(?,?,?,?)
-                on conflict(usuario_id) do update set
-                nombre=excluded.nombre,telefono=excluded.telefono,
-                dni=excluded.dni,actualizado_en=now()
-                """,usuario,c.nombre().strip(),c.telefono().strip(),c.dni());
-            // Guardar una sola dirección principal por cuenta.
-            // El snapshot del pedido ya se conservó en public.pedidos, sin alterarse.
-            // Evita crear una nueva fila en cada compra del mismo usuario.
-            int direccionesActualizadas=jdbc.update("""
-                update public.direcciones set
-                  destinatario=?,telefono=?,departamento=?,provincia=?,distrito=?,
-                  linea_direccion=?,referencia=?,principal=true,actualizado_en=now()
-                where id=(
-                  select id from public.direcciones where usuario_id=?
-                  order by principal desc,actualizado_en desc,creado_en desc
-                  limit 1 for update
-                )
-                """,c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
-                c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),
-                limpiar(c.referencia()),usuario);
-            if(direccionesActualizadas==0) {
-                jdbc.update("""
-                    insert into public.direcciones
-                    (usuario_id,destinatario,telefono,departamento,provincia,distrito,
-                     linea_direccion,referencia,principal)
-                    values(?,?,?,?,?,?,?,?,true)
-                    """,usuario,c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
-                    c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),
-                    limpiar(c.referencia()));
-            }
-        }
+        // La compra almacena sus propios snapshots de contacto y destino en
+        // public.pedidos. No modifica public.perfiles ni public.direcciones:
+        // cambiar de distrito para UNA entrega nunca altera la dirección principal.
+        // guardarDatos se conserva en el contrato JSON legado, pero se ignora.
 
         Map<String,Object> respuesta=new LinkedHashMap<>();
         respuesta.put("id",pedidoId);
