@@ -63,7 +63,7 @@ public class CorreoPagoJob {
                 String codigo = p.get("codigo").toString();
                 String texto = "Nuevo comprobante de pago pendiente de revisar en JM-AROMAS.\n" +
                     "Pedido: " + codigo + "\n" +
-                    "Monto de productos: S/ " + p.get("total") + "\n" +
+                    "Total del pedido (productos + envío): S/ " + p.get("total") + "\n" +
                     "Medio: " + p.get("metodo_pago") + "\n" +
                     "Revisa el pago directamente en tu cuenta bancaria o Yape. " +
                     "La captura enviada por el cliente NO confirma el abono.\n" +
