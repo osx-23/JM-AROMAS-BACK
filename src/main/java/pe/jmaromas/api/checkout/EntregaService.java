@@ -59,7 +59,7 @@ public class EntregaService {
             if (agenciaId != null && !agenciaId.isBlank())
                 throw new IllegalArgumentException("El delivery Lima no utiliza agencias Shalom");
             return new Cotizacion(tipo, zona.id(), null,
-                BigDecimal.valueOf(zona.precio()), zona.grupo()+": "+zona.etiqueta());
+                BigDecimal.valueOf(zona.precio()), "Delivery a domicilio: "+zona.etiqueta());
         }
         if ("SHALOM".equals(tipo)) {
             Agencia agencia = agenciasPorId.get(agenciaId);
@@ -146,7 +146,7 @@ public class EntregaService {
         for(String line:filas.split("\\R")) {
             if(line.isBlank())continue;
             String[] c=line.strip().split("\\|",-1);
-            String nombre=c[1]+(c[2].isBlank()?"":" — "+c[2]);
+            String nombre=c[1]+(c[2].isBlank() || "Zona general".equals(c[2])?"":" — "+c[2]);
             String dept=c[0].startsWith("Callao")?"Callao":"Lima";
             z.add(new Zona("LIMA_"+(++i),c[0],c[1],nombre,
                 Integer.parseInt(c[3]),dept));
