@@ -223,19 +223,19 @@ public class CheckoutPublicController {
           (id,codigo,usuario_id,idempotencia,cliente_snapshot,direccion_snapshot,
            metodo_pago,medio_pago_id,estado,estado_pago,
            subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba,
-           metodo_entrega,zona_entrega_id,agencia_shalom)
+           metodo_entrega,zona_entrega_id,agencia_shalom,descripcion_entrega)
           values (?,?,?,?,
             jsonb_build_object('nombre',?,'dni',?,'telefono',?,'email',?),
             jsonb_build_object('destinatario',?,'telefono',?,'departamento',?,'provincia',?,
                                'distrito',?,'linea_direccion',?,'referencia',?),
-            ?,?,'PENDIENTE','PENDIENTE',?,?,?,?,?,now()+interval '24 hours',?,?,?,?)
+            ?,?,'PENDIENTE','PENDIENTE',?,?,?,?,?,now()+interval '24 hours',?,?,?,?,?)
           """,
           pedidoId,codigo,usuario,data.idempotencia(),
           c.nombre().strip(),c.dni(),c.telefono().strip(),c.email().strip().toLowerCase(Locale.ROOT),
           c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
           c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),limpiar(c.referencia()),
           metodo,idMedio,subtotal,descuentoTotal,entrega.costo(),totalPedido,hash,
-          pruebaAdmin,entrega.tipo(),entrega.zonaId(),entrega.agenciaId());
+          pruebaAdmin,entrega.tipo(),entrega.zonaId(),entrega.agenciaId(),entrega.descripcion());
 
         for(Linea l:lineas){
             BigDecimal totalLinea=l.precio().subtract(l.rebaja())
@@ -331,11 +331,7 @@ public class CheckoutPublicController {
             p.costo_entrega as "costoEntrega",p.total as "totalPedido",
             p.metodo_entrega as "metodoEntrega",p.zona_entrega_id as "zonaEntregaId",
             p.agencia_shalom as "agenciaShalom",
-            case when p.metodo_entrega='SHALOM'
-                 then 'Recojo en Shalom: ' || split_part(p.agencia_shalom,'|',2)
-                 when p.metodo_entrega='DELIVERY_LIMA'
-                 then 'Delivery Lima y Callao: ' || coalesce(p.direccion_snapshot->>'distrito','')
-                 else 'Envío por coordinar' end as "descripcionEntrega",
+            p.descripcion_entrega as "descripcionEntrega",
             p.creado_en as "creadoEn",p.expira_en as "expiraEn",
             case when p.metodo_pago='COORDINAR_WHATSAPP' and m.activo
                  then m.telefono_whatsapp else null end as "telefonoWhatsapp",
