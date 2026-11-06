@@ -202,18 +202,18 @@ public class CheckoutPublicController {
           insert into public.pedidos
           (id,codigo,usuario_id,idempotencia,cliente_snapshot,direccion_snapshot,
            metodo_pago,medio_pago_id,estado,estado_pago,
-           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en)
+           subtotal,descuento_total,costo_entrega,total,acceso_invitado_hash,expira_en,es_prueba)
           values (?,?,?,?,
             jsonb_build_object('nombre',?,'dni',?,'telefono',?,'email',?),
             jsonb_build_object('destinatario',?,'telefono',?,'departamento',?,'provincia',?,
                                'distrito',?,'linea_direccion',?,'referencia',?),
-            ?,?,'PENDIENTE','PENDIENTE',?,?,0,?,?,now()+interval '24 hours')
+            ?,?,'PENDIENTE','PENDIENTE',?,?,0,?,?,now()+interval '24 hours',?)
           """,
           pedidoId,codigo,usuario,data.idempotencia(),
           c.nombre().strip(),c.dni(),c.telefono().strip(),c.email().strip().toLowerCase(Locale.ROOT),
           c.nombre().strip(),c.telefono().strip(),c.departamento().strip(),
           c.provincia().strip(),c.distrito().strip(),c.direccion().strip(),limpiar(c.referencia()),
-          metodo,idMedio,subtotal,descuentoTotal,totalConDescuento,hash);
+          metodo,idMedio,subtotal,descuentoTotal,totalConDescuento,hash,pruebaAdmin);
 
         for(Linea l:lineas){
             BigDecimal totalLinea=l.precio().subtract(l.rebaja())
