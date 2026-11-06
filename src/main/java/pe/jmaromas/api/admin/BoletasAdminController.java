@@ -125,6 +125,18 @@ public class BoletasAdminController {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Solo se pueden vincular boletas a pedidos no cancelados con pago confirmado.");
 
+        // Si la solicitud automática ya está en emisión o fue aceptada,
+        // se prohíbe registrar una boleta SEE-SOL para el mismo pedido.
+        List<String> automaticos = jdbc.query("""
+            select estado from app_private.boletas_automaticas
+            where pedido_id=?
+            for update
+            """,(rs,n)->rs.getString(1),entrada.pedidoId());
+        if(!automaticos.isEmpty() &&
+           List.of("GENERANDO","ENVIADA","ACEPTADA").contains(automaticos.getFirst()))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "El pedido tiene una emisión automática en proceso o completada; revisa su estado.");
+
         // Dos transacciones concurrentes sobre el mismo pedido quedan serializadas
         // por el bloqueo FOR UPDATE. El UNIQUE también protege el número de boleta.
         List<UUID> insertadas = jdbc.query("""
@@ -140,6 +152,14 @@ public class BoletasAdminController {
         if (insertadas.isEmpty())
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Este pedido o la serie y número de boleta ya fueron registrados.");
+        // Al vincular una boleta SEE-SOL real, desactiva la solicitud automática
+        // para evitar que en el futuro se emita un segundo comprobante tributario.
+        jdbc.update("""
+            update app_private.boletas_automaticas
+               set estado='DESCARTADA',actualizado_en=now()
+             where pedido_id=? and estado in
+                ('PENDIENTE_CONFIGURACION','LISTA_PARA_EMITIR','ERROR')
+            """,entrada.pedidoId());
 
         Map<String,Object> respuesta = new LinkedHashMap<>();
         respuesta.put("id",insertadas.getFirst());
