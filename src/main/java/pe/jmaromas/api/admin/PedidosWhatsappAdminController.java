@@ -26,7 +26,16 @@ public class PedidosWhatsappAdminController {
     public List<Map<String,Object>> listar() {
         return jdbc.queryForList("""
           select p.id,p.codigo,p.estado,p.estado_pago as "estadoPago",
-                 p.total,p.costo_entrega as "costoEntrega",
+                 p.total,p.subtotal,p.descuento_total as "descuentoTotal",
+                 p.costo_entrega as "costoEntrega",
+                 (select exists(select 1 from app_private.comprobantes_pago cp
+                   where cp.pedido_id=p.id)) as "tieneEvidencia",
+                 (select cp.estado from app_private.comprobantes_pago cp
+                   where cp.pedido_id=p.id order by cp.creado_en desc limit 1)
+                     as "estadoEvidencia",
+                 (select cp.creado_en from app_private.comprobantes_pago cp
+                   where cp.pedido_id=p.id order by cp.creado_en desc limit 1)
+                     as "evidenciaEn",
                  p.metodo_entrega as "metodoEntrega",
                  p.agencia_shalom as "agenciaShalom",
                  p.zona_entrega_id as "zonaEntregaId",
