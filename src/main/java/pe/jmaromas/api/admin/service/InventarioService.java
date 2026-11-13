@@ -48,7 +48,7 @@ public class InventarioService {
         String canonico = CodigoBarras.normalizar(codigo);
         List<Map<String,Object>> rows = jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
-                   p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   p.categoria_id as "categoriaId", p.precio, c.costo_compra as "costoCompra", p.stock, p.activo, p.publicado,
                    p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
                    p.familia_olfativa as "familiaOlfativa",
                    (select i.ruta_storage from public.imagenes_producto i
