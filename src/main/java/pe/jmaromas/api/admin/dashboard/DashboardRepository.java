@@ -64,6 +64,44 @@ public class DashboardRepository {
             where creado_en>=? and creado_en<?
             """,desde,hasta));
 
+        // Ingreso NETO de productos (sin delivery), costo registrado en el momento
+        // de cada venta y descuentos ya reflejados en total_linea.
+        // Si falta cualquier costo histórico se devuelve NULL, nunca una ganancia ficticia.
+        resultado.put("rentabilidad",jdbc.queryForMap("""
+            with operaciones as (
+              select l.total_linea as ingreso, l.cantidad,
+                     c.costo_unitario_snapshot as costo
+              from public.detalles_pedido l
+              join public.pedidos p on p.id=l.pedido_id
+              left join app_private.costos_detalle_pedido c
+                on c.pedido_id=l.pedido_id and c.producto_id=l.producto_id
+              where p.estado_pago='PAGADO'
+                and p.estado not in ('CANCELADO','VENCIDO')
+                and coalesce(p.confirmacion_pago_en,p.creado_en)>=?
+                and coalesce(p.confirmacion_pago_en,p.creado_en)<?
+              union all
+              select d.total_linea as ingreso,d.cantidad,
+                     d.costo_unitario_snapshot as costo
+              from app_private.ventas_presenciales_detalle d
+              join app_private.ventas_presenciales v on v.id=d.venta_id
+              where v.creado_en>=? and v.creado_en<?
+            ), totales as (
+              select coalesce(sum(ingreso),0) as ingresos_productos,
+                     coalesce(sum(cantidad*costo),0) as costos,
+                     count(*) filter(where costo is null)::integer as faltantes
+              from operaciones
+            )
+            select ingresos_productos as "ingresosProductos",
+                   faltantes as "lineasSinCosto",
+                   case when faltantes>0 then null
+                     else ingresos_productos-costos end as "gananciaBruta",
+                   case when faltantes>0 then null
+                     when ingresos_productos=0 then 0
+                     else round(100*(ingresos_productos-costos)/ingresos_productos,2)
+                   end as "margenBrutoPct"
+            from totales
+            """,desde,hasta,desde,hasta));
+
         resultado.put("inventario",jdbc.queryForMap("""
             select count(*) filter(where activo=true)::integer as "productosActivos",
                 count(*) filter(where activo=true and publicado=true)::integer as "publicados",
