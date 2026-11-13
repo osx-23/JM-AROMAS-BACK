@@ -25,7 +25,7 @@ public class VentasPresencialesController {
 
     public record Item(UUID productoId, Integer cantidad) {}
     public record NuevaVenta(UUID idempotencia, String medioPago, List<Item> articulos) {}
-    private record Producto(UUID id, String sku, String nombre, BigDecimal precio, int stock, int cantidad) {}
+    private record Producto(UUID id, String sku, String nombre, BigDecimal precio, BigDecimal costoCompra, int stock, int cantidad) {}
 
     @GetMapping("/productos")
     public List<Map<String,Object>> productos(@RequestParam(defaultValue="") String buscar) {
@@ -121,11 +121,14 @@ public class VentasPresencialesController {
         // Bloqueos en orden estable: compatible con reservas del e-commerce.
         for(var entrada:cantidades.entrySet()) {
             var encontrados=jdbc.query("""
-                select id,sku,nombre,precio,stock from public.productos
-                where id=? and activo=true for update
+                select p.id,p.sku,p.nombre,p.precio,c.costo_compra,p.stock
+                from public.productos p
+                left join app_private.productos_costos c on c.producto_id=p.id
+                where p.id=? and p.activo=true for update of p
                 """,(rs,n)->new Producto(rs.getObject("id",UUID.class),
                     rs.getString("sku"),rs.getString("nombre"),
-                    rs.getBigDecimal("precio"),rs.getInt("stock"),entrada.getValue()),
+                    rs.getBigDecimal("precio"),rs.getBigDecimal("costo_compra"),
+                    rs.getInt("stock"),entrada.getValue()),
                 entrada.getKey());
             if(encontrados.isEmpty())
                 throw new IllegalArgumentException("Producto no disponible: "+entrada.getKey());
@@ -151,9 +154,9 @@ public class VentasPresencialesController {
             BigDecimal linea=p.precio().multiply(BigDecimal.valueOf(p.cantidad()));
             jdbc.update("""
                 insert into app_private.ventas_presenciales_detalle
-                (venta_id,producto_id,sku_snapshot,nombre_snapshot,cantidad,precio_unitario,total_linea)
-                values(?,?,?,?,?,?,?)
-                """,ventaId,p.id(),p.sku(),p.nombre(),p.cantidad(),p.precio(),linea);
+                (venta_id,producto_id,sku_snapshot,nombre_snapshot,cantidad,precio_unitario,total_linea,costo_unitario_snapshot)
+                values(?,?,?,?,?,?,?,?)
+                """,ventaId,p.id(),p.sku(),p.nombre(),p.cantidad(),p.precio(),linea,p.costoCompra());
             jdbc.update("""
                 update public.productos set stock=stock-?, actualizado_en=now() where id=?
                 """,p.cantidad(),p.id());
