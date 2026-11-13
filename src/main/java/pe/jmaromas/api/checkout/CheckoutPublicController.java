@@ -203,7 +203,7 @@ public class CheckoutPublicController {
         // Locks en orden de UUID para evitar interbloqueos entre compras simultáneas.
         for(var entrada:cantidades.entrySet()){
             List<Linea> filas=jdbc.query("""
-              select p.id,p.sku,p.nombre,p.precio,p.stock,
+              select p.id,p.sku,p.nombre,p.precio,p.stock,c.costo_compra,
                      coalesce((select case when d.tipo='PORCENTAJE'
                                        then round(p.precio*d.valor/100,2)
                                        else d.valor end
@@ -212,11 +212,12 @@ public class CheckoutPublicController {
                          and now()>=d.inicio and now()<d.fin
                        order by d.inicio desc,d.id desc limit 1),0) as rebaja
               from public.productos p
+              left join app_private.productos_costos c on c.producto_id=p.id
               where p.id=? and p.activo=true and p.publicado=true for update of p
               """,(rs,n)->new Linea(
                   rs.getObject("id",UUID.class),rs.getString("sku"),
                   rs.getString("nombre"),rs.getBigDecimal("precio"),
-                  rs.getBigDecimal("rebaja"),
+                  rs.getBigDecimal("rebaja"),rs.getBigDecimal("costo_compra"),
                   rs.getInt("stock"),entrada.getValue()),entrada.getKey());
             if(filas.isEmpty())throw new IllegalArgumentException("Producto no disponible: "+entrada.getKey());
             Linea linea=filas.getFirst();
@@ -256,6 +257,11 @@ public class CheckoutPublicController {
                  precio_unitario,descuento_unitario,total_linea)
                 values(?,?,?,?,?,?,?,?)
                 """,pedidoId,l.id(),l.sku(),l.nombre(),l.cantidad(),l.precio(),l.rebaja(),totalLinea);
+            // El costo es un snapshot privado del momento del pedido, no el costo actual del catálogo.
+            jdbc.update("""
+                insert into app_private.costos_detalle_pedido
+                (pedido_id,producto_id,costo_unitario_snapshot) values(?,?,?)
+                """,pedidoId,l.id(),l.costoCompra());
             jdbc.update("update public.productos set stock=stock-?, actualizado_en=now() where id=?",
                 l.cantidad(),l.id());
             jdbc.update("""
@@ -526,5 +532,5 @@ public class CheckoutPublicController {
         } catch (Exception e) { throw new IllegalStateException("SHA-256 no disponible",e); }
     }
     private record Linea(UUID id,String sku,String nombre,BigDecimal precio,
-                         BigDecimal rebaja,int stock,int cantidad){}
+                         BigDecimal rebaja,BigDecimal costoCompra,int stock,int cantidad){}
 }
