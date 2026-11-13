@@ -102,6 +102,40 @@ public class DashboardRepository {
             from totales
             """,desde,hasta,desde,hasta));
 
+        // Comparación entre el mes calendario de la fecha final elegida
+        // y el mes calendario anterior; ambos usan la zona horaria de Lima.
+        java.time.YearMonth mesActual=java.time.YearMonth.from(fin);
+        java.time.YearMonth mesAnterior=mesActual.minusMonths(1);
+        Timestamp desdeAnterior=Timestamp.from(mesAnterior.atDay(1).atStartOfDay(LIMA).toInstant());
+        Timestamp inicioActual=Timestamp.from(mesActual.atDay(1).atStartOfDay(LIMA).toInstant());
+        Timestamp finActual=Timestamp.from(mesActual.plusMonths(1).atDay(1).atStartOfDay(LIMA).toInstant());
+        Map<String,Object> comparacion=new LinkedHashMap<>();
+        comparacion.put("mesActual",mesActual.toString());
+        comparacion.put("mesAnterior",mesAnterior.toString());
+        comparacion.putAll(jdbc.queryForMap("""
+            with cobros as (
+              select total,coalesce(confirmacion_pago_en,creado_en) as fecha
+              from public.pedidos
+              where estado_pago='PAGADO' and estado not in ('CANCELADO','VENCIDO')
+                and coalesce(confirmacion_pago_en,creado_en)>=?
+                and coalesce(confirmacion_pago_en,creado_en)<?
+              union all
+              select total,creado_en as fecha from app_private.ventas_presenciales
+              where creado_en>=? and creado_en<?
+            ), totales as (
+              select coalesce(sum(total) filter(where fecha>=?),0) as actual,
+                     coalesce(sum(total) filter(where fecha<?),0) as anterior
+              from cobros
+            )
+            select actual as "ingresosMesActual",
+                   anterior as "ingresosMesAnterior",
+                   case when anterior=0 then null
+                     else round(100*(actual-anterior)/anterior,2)
+                   end as "variacionPct"
+            from totales
+            """,desdeAnterior,finActual,desdeAnterior,finActual,inicioActual,inicioActual));
+        resultado.put("comparacionMensual",comparacion);
+
         resultado.put("inventario",jdbc.queryForMap("""
             select count(*) filter(where activo=true)::integer as "productosActivos",
                 count(*) filter(where activo=true and publicado=true)::integer as "publicados",
