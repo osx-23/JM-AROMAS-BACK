@@ -17,5 +17,6 @@ public record ProductoPublico(
         BigDecimal precioAnterior,
         String publicoObjetivo,
         Integer contenidoMl,
+        Integer contenidoGramos,
         String familiaOlfativa
 ) {}
