@@ -29,18 +29,18 @@ public class InventarioService {
                            String marca, String descripcion, UUID categoriaId,
                            BigDecimal precio, Integer stock,
                            String publicoObjetivo, Integer contenidoMl,
-                           String familiaOlfativa) {}
+                           String familiaOlfativa, BigDecimal precioCompra) {}
     public record IngresoStock(Integer cantidad, String motivo) {}
 
     public List<Map<String, Object>> listar() {
         return jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
-                   p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   p.categoria_id as "categoriaId", p.precio, pc.precio_compra as "precioCompra", p.stock, p.activo, p.publicado,
                    p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
                    p.familia_olfativa as "familiaOlfativa",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
-            from public.productos p order by p.creado_en desc limit 100
+            from public.productos p left join app_private.productos_costos pc on pc.producto_id=p.id order by p.creado_en desc limit 100
             """);
     }
 
@@ -48,12 +48,12 @@ public class InventarioService {
         String canonico = CodigoBarras.normalizar(codigo);
         List<Map<String,Object>> rows = jdbc.queryForList("""
             select p.id, p.codigo_barras as "codigoBarras", p.sku, p.nombre, p.marca, p.descripcion,
-                   p.categoria_id as "categoriaId", p.precio, p.stock, p.activo, p.publicado,
+                   p.categoria_id as "categoriaId", p.precio, pc.precio_compra as "precioCompra", p.stock, p.activo, p.publicado,
                    p.publico_objetivo as "publicoObjetivo", p.contenido_ml as "contenidoMl",
                    p.familia_olfativa as "familiaOlfativa",
                    (select i.ruta_storage from public.imagenes_producto i
                     where i.producto_id=p.id order by i.orden,i.creada_en,i.id limit 1) as "rutaFoto"
-            from public.productos p where p.codigo_barras = ? limit 1
+            from public.productos p left join app_private.productos_costos pc on pc.producto_id=p.id where p.codigo_barras = ? limit 1
             """, canonico);
         return rows.isEmpty() ? ResponseEntity.notFound().build() : ResponseEntity.ok(rows.getFirst());
     }
@@ -63,6 +63,7 @@ public class InventarioService {
         String codigo = CodigoBarras.normalizar(data.codigoBarras());
         if (data.nombre() == null || data.nombre().isBlank() || data.nombre().length() > 160
                 || data.precio() == null || data.precio().signum() < 0
+                || !precioCompraValido(data.precioCompra())
                 || data.stock() == null || data.stock() < 0 || data.stock() > 1000000) {
             return ResponseEntity.badRequest().body(Map.of("error", "Nombre, precio o stock inválidos"));
         }
@@ -85,6 +86,7 @@ public class InventarioService {
                 data.categoriaId(), data.precio(), data.stock(),
                 data.publicoObjetivo(),data.contenidoMl(),data.familiaOlfativa());
             if (rows != 1) throw new IllegalStateException("No se insertó el producto");
+            guardarPrecioCompra(id, data.precioCompra());
             if (data.stock() > 0) {
                 jdbc.update("""
                     insert into public.movimientos_stock
@@ -113,6 +115,7 @@ public class InventarioService {
         String codigo=CodigoBarras.normalizar(data.codigoBarras());
         if(data.nombre()==null || data.nombre().isBlank() || data.nombre().length()>160 ||
            data.precio()==null || data.precio().signum()<0 ||
+           !precioCompraValido(data.precioCompra()) ||
            data.precio().scale()>2 || data.precio().precision()>12)
             throw new IllegalArgumentException("Nombre o precio inválidos");
         if(data.sku()==null || data.sku().isBlank() || data.sku().length()>90)
@@ -146,7 +149,22 @@ public class InventarioService {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(
                 Map.of("error","Este código de barras o SKU ya existe"));
         }
+        guardarPrecioCompra(id, data.precioCompra());
         return ResponseEntity.ok(Map.of("id",id,"mensaje","Producto actualizado"));
+    }
+
+    private static boolean precioCompraValido(BigDecimal precioCompra) {
+        return precioCompra == null || (precioCompra.signum() >= 0 &&
+            precioCompra.scale() <= 2 && precioCompra.precision() <= 12);
+    }
+
+    private void guardarPrecioCompra(UUID productoId, BigDecimal precioCompra) {
+        jdbc.update("""
+            insert into app_private.productos_costos(producto_id, precio_compra)
+            values (?, ?)
+            on conflict (producto_id) do update
+              set precio_compra=excluded.precio_compra, actualizado_en=now()
+            """, productoId, precioCompra);
     }
 
     private static void validarPresentacion(String publico,Integer ml,String familia) {
