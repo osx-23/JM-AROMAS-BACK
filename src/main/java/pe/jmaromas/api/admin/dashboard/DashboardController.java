@@ -1,6 +1,8 @@
 package pe.jmaromas.api.admin.dashboard;
 
 import java.util.Map;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -14,7 +16,10 @@ public class DashboardController {
     public DashboardController(DashboardService service) {this.service=service;}
 
     @GetMapping("/resumen")
-    public Map<String,Object> resumen(@RequestParam(defaultValue="30") int dias) {
-        return service.resumen(dias);
+    public Map<String,Object> resumen(
+            @RequestParam(required=false) Integer dias,
+            @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate hasta) {
+        return service.resumen(dias,desde,hasta);
     }
 }

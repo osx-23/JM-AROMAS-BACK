@@ -22,28 +22,38 @@ public class DashboardRepository {
     public Map<String,Object> resumen(int dias) {
         LocalDate hoy=LocalDate.now(LIMA);
         LocalDate inicio=hoy.minusDays(dias-1);
+        return resumen(inicio,hoy);
+    }
+
+    /** Todos los indicadores usan el mismo rango inclusivo de fechas locales de Lima. */
+    public Map<String,Object> resumen(LocalDate inicio,LocalDate fin) {
         Timestamp desde=Timestamp.from(inicio.atStartOfDay(LIMA).toInstant());
+        Timestamp hasta=Timestamp.from(fin.plusDays(1).atStartOfDay(LIMA).toInstant());
 
         Map<String,Object> resultado=new LinkedHashMap<>();
-        resultado.put("periodoDias",dias);
+        resultado.put("periodoDias",java.time.temporal.ChronoUnit.DAYS.between(inicio,fin)+1);
         resultado.put("fechaInicio",inicio.toString());
-        resultado.put("fechaFin",hoy.toString());
+        resultado.put("fechaFin",fin.toString());
         resultado.put("zonaHoraria","America/Lima");
 
         resultado.put("pedidos",jdbc.queryForMap("""
             select
-                count(*) filter(where creado_en>=?)::integer as "pedidosPeriodo",
+                count(*) filter(where creado_en>=? and creado_en<?)::integer as "pedidosPeriodo",
                 count(*) filter(where estado_pago='PAGADO'
-                    and coalesce(confirmacion_pago_en,creado_en)>=?)::integer as "pedidosPagados",
+                    and coalesce(confirmacion_pago_en,creado_en)>=?
+                    and coalesce(confirmacion_pago_en,creado_en)<?
+                    and estado not in ('CANCELADO','VENCIDO'))::integer as "pedidosPagados",
                 coalesce(sum(total) filter(where estado_pago='PAGADO'
-                    and coalesce(confirmacion_pago_en,creado_en)>=?),0) as "ingresosConfirmados",
-                count(*) filter(where creado_en>=?
+                    and coalesce(confirmacion_pago_en,creado_en)>=?
+                    and coalesce(confirmacion_pago_en,creado_en)<?
+                    and estado not in ('CANCELADO','VENCIDO')),0) as "ingresosConfirmados",
+                count(*) filter(where creado_en>=? and creado_en<?
                     and estado not in ('CANCELADO','VENCIDO')
                     and estado_pago not in ('PAGADO','ANULADO'))::integer as "pendientes",
-                count(*) filter(where creado_en>=?
+                count(*) filter(where creado_en>=? and creado_en<?
                     and estado in ('CANCELADO','VENCIDO'))::integer as "cancelados"
             from public.pedidos
-            """,desde,desde,desde,desde,desde));
+            """,desde,hasta,desde,hasta,desde,hasta,desde,hasta,desde,hasta));
 
         // Las ventas de mostrador ya están cobradas al confirmarse y viven en app_private.
         // Mantener los contadores de "pedidos" exclusivos de la web para no mezclar estados.
@@ -51,8 +61,8 @@ public class DashboardRepository {
             select count(*)::integer as "cantidad",
                    coalesce(sum(total),0) as "ingresos"
             from app_private.ventas_presenciales
-            where creado_en>=?
-            """,desde));
+            where creado_en>=? and creado_en<?
+            """,desde,hasta));
 
         resultado.put("inventario",jdbc.queryForMap("""
             select count(*) filter(where activo=true)::integer as "productosActivos",
@@ -76,9 +86,10 @@ public class DashboardRepository {
                     where estado_pago='PAGADO'
                       and estado not in ('CANCELADO','VENCIDO')
                       and coalesce(confirmacion_pago_en,creado_en)>=?
+                      and coalesce(confirmacion_pago_en,creado_en)<?
                     union all
                     select (creado_en at time zone 'America/Lima')::date as fecha, total
-                    from app_private.ventas_presenciales where creado_en>=?
+                    from app_private.ventas_presenciales where creado_en>=? and creado_en<?
                 ) cobros
                 group by fecha
             )
@@ -87,7 +98,7 @@ public class DashboardRepository {
                 coalesce(p.cantidad,0)::integer as "pedidosPagados"
             from dias d left join pagos p on p.fecha=d.fecha
             order by d.fecha
-            """,Date.valueOf(inicio),Date.valueOf(hoy),desde,desde));
+            """,Date.valueOf(inicio),Date.valueOf(fin),desde,hasta,desde,hasta));
 
         resultado.put("metodos",jdbc.queryForList("""
             select metodo_pago as "metodo", count(*)::integer as "cantidad",
@@ -98,12 +109,13 @@ public class DashboardRepository {
                 where estado_pago='PAGADO'
                   and estado not in ('CANCELADO','VENCIDO')
                   and coalesce(confirmacion_pago_en,creado_en)>=?
+                  and coalesce(confirmacion_pago_en,creado_en)<?
                 union all
                 select medio_pago as metodo_pago, total
-                from app_private.ventas_presenciales where creado_en>=?
+                from app_private.ventas_presenciales where creado_en>=? and creado_en<?
             ) cobros
             group by metodo_pago order by "monto" desc
-            """,desde,desde));
+            """,desde,hasta,desde,hasta));
 
         resultado.put("masVendidos",jdbc.queryForList("""
             select nombre as "nombre",sku as "sku",
@@ -117,16 +129,17 @@ public class DashboardRepository {
                 where p.estado_pago='PAGADO'
                   and p.estado not in ('CANCELADO','VENCIDO')
                   and coalesce(p.confirmacion_pago_en,p.creado_en)>=?
+                  and coalesce(p.confirmacion_pago_en,p.creado_en)<?
                 union all
                 select d.nombre_snapshot,d.sku_snapshot,d.cantidad,d.total_linea
                 from app_private.ventas_presenciales_detalle d
                 join app_private.ventas_presenciales v on v.id=d.venta_id
-                where v.creado_en>=?
+                where v.creado_en>=? and v.creado_en<?
             ) lineas
             group by nombre,sku
             order by "unidades" desc,"ingresos" desc
             limit 5
-            """,desde,desde));
+            """,desde,hasta,desde,hasta));
 
         resultado.put("stockCritico",jdbc.queryForList("""
             select nombre,sku,stock,publicado
