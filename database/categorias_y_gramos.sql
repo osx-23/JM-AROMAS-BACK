@@ -3,6 +3,7 @@
 insert into public.categorias (nombre,slug,activa) values
  ('Perfumes','perfumes',true),
  ('Cuidado personal','cuidado-personal',true),
+ ('Cuidado de rostro','cuidado-de-rostro',true),
  ('Maquillaje','maquillaje',true),
  ('Bebés y niños','bebes-y-ninos',true)
 on conflict (slug) do update set nombre=excluded.nombre,activa=true;
