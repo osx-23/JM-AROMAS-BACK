@@ -41,6 +41,36 @@ public class VentasPresencialesController {
             """, q,q,q,q);
     }
 
+    /** Historial administrativo de ventas físicas, sin datos personales de clientes. */
+    @GetMapping
+    public List<Map<String,Object>> listar(
+            @RequestParam(required=false) String desde,
+            @RequestParam(required=false) String hasta,
+            @RequestParam(defaultValue="") String buscar,
+            @RequestParam(defaultValue="TODOS") String medioPago) {
+        String q=buscar.strip();
+        if(q.length()>120)throw new IllegalArgumentException("Búsqueda demasiado larga");
+        if(!List.of("TODOS","EFECTIVO","YAPE","TRANSFERENCIA","TARJETA").contains(medioPago))
+            throw new IllegalArgumentException("Medio de pago inválido");
+        java.time.LocalDate fechaDesde=desde==null||desde.isBlank()?null:java.time.LocalDate.parse(desde);
+        java.time.LocalDate fechaHasta=hasta==null||hasta.isBlank()?null:java.time.LocalDate.parse(hasta);
+        if(fechaDesde!=null && fechaHasta!=null && fechaDesde.isAfter(fechaHasta))
+            throw new IllegalArgumentException("El inicio debe ser anterior al fin");
+        // Limitar la consulta para evitar cargar indefinidamente el historial.
+        var zone=ZoneId.of("America/Lima");
+        OffsetDateTime inicio=fechaDesde==null?null:fechaDesde.atStartOfDay(zone).toOffsetDateTime();
+        OffsetDateTime fin=fechaHasta==null?null:fechaHasta.plusDays(1).atStartOfDay(zone).toOffsetDateTime();
+        return jdbc.queryForList("""
+            select id,codigo,medio_pago as "medioPago",total,creado_en as "creadoEn"
+            from app_private.ventas_presenciales
+            where (?::timestamptz is null or creado_en>=?::timestamptz)
+              and (?::timestamptz is null or creado_en<?::timestamptz)
+              and (?='' or codigo ilike '%' || ? || '%')
+              and (?='TODOS' or medio_pago=?)
+            order by creado_en desc,id desc limit 500
+            """,inicio,inicio,fin,fin,q,q,medioPago,medioPago);
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Map<String,Object>> consultar(@PathVariable UUID id) {
         var rows=jdbc.queryForList("""
