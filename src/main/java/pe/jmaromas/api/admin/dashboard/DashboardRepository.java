@@ -45,6 +45,15 @@ public class DashboardRepository {
             from public.pedidos
             """,desde,desde,desde,desde,desde));
 
+        // Las ventas de mostrador ya están cobradas al confirmarse y viven en app_private.
+        // Mantener los contadores de "pedidos" exclusivos de la web para no mezclar estados.
+        resultado.put("ventasPresenciales",jdbc.queryForMap("""
+            select count(*)::integer as "cantidad",
+                   coalesce(sum(total),0) as "ingresos"
+            from app_private.ventas_presenciales
+            where creado_en>=?
+            """,desde));
+
         resultado.put("inventario",jdbc.queryForMap("""
             select count(*) filter(where activo=true)::integer as "productosActivos",
                 count(*) filter(where activo=true and publicado=true)::integer as "publicados",
@@ -59,44 +68,65 @@ public class DashboardRepository {
                 select fecha::date as fecha
                 from generate_series(?::date,?::date,interval '1 day') as fecha
             ), pagos as (
-                select (coalesce(confirmacion_pago_en,creado_en)
-                    at time zone 'America/Lima')::date as fecha,
-                    sum(total) as ingresos,
-                    count(*)::integer as cantidad
-                from public.pedidos
-                where estado_pago='PAGADO'
-                    and coalesce(confirmacion_pago_en,creado_en)>=?
-                group by 1
+                select fecha, sum(total) as ingresos, count(*)::integer as cantidad
+                from (
+                    select (coalesce(confirmacion_pago_en,creado_en)
+                        at time zone 'America/Lima')::date as fecha, total
+                    from public.pedidos
+                    where estado_pago='PAGADO'
+                      and estado not in ('CANCELADO','VENCIDO')
+                      and coalesce(confirmacion_pago_en,creado_en)>=?
+                    union all
+                    select (creado_en at time zone 'America/Lima')::date as fecha, total
+                    from app_private.ventas_presenciales where creado_en>=?
+                ) cobros
+                group by fecha
             )
             select to_char(d.fecha,'YYYY-MM-DD') as "fecha",
                 coalesce(p.ingresos,0) as "ingresos",
                 coalesce(p.cantidad,0)::integer as "pedidosPagados"
             from dias d left join pagos p on p.fecha=d.fecha
             order by d.fecha
-            """,Date.valueOf(inicio),Date.valueOf(hoy),desde));
+            """,Date.valueOf(inicio),Date.valueOf(hoy),desde,desde));
 
         resultado.put("metodos",jdbc.queryForList("""
-            select metodo_pago as "metodo",
-                count(*)::integer as "cantidad",
-                coalesce(sum(total),0) as "monto"
-            from public.pedidos
-            where estado_pago='PAGADO'
-              and coalesce(confirmacion_pago_en,creado_en)>=?
+            select metodo_pago as "metodo", count(*)::integer as "cantidad",
+                   coalesce(sum(total),0) as "monto"
+            from (
+                select metodo_pago, total
+                from public.pedidos
+                where estado_pago='PAGADO'
+                  and estado not in ('CANCELADO','VENCIDO')
+                  and coalesce(confirmacion_pago_en,creado_en)>=?
+                union all
+                select medio_pago as metodo_pago, total
+                from app_private.ventas_presenciales where creado_en>=?
+            ) cobros
             group by metodo_pago order by "monto" desc
-            """,desde));
+            """,desde,desde));
 
         resultado.put("masVendidos",jdbc.queryForList("""
-            select l.nombre_snapshot as "nombre",l.sku_snapshot as "sku",
-                sum(l.cantidad)::integer as "unidades",
-                coalesce(sum(l.total_linea),0) as "ingresos"
-            from public.detalles_pedido l
-            join public.pedidos p on p.id=l.pedido_id
-            where p.estado_pago='PAGADO'
-              and coalesce(p.confirmacion_pago_en,p.creado_en)>=?
-            group by l.nombre_snapshot,l.sku_snapshot
+            select nombre as "nombre",sku as "sku",
+                sum(cantidad)::integer as "unidades",
+                coalesce(sum(total_linea),0) as "ingresos"
+            from (
+                select l.nombre_snapshot as nombre,l.sku_snapshot as sku,
+                       l.cantidad,l.total_linea
+                from public.detalles_pedido l
+                join public.pedidos p on p.id=l.pedido_id
+                where p.estado_pago='PAGADO'
+                  and p.estado not in ('CANCELADO','VENCIDO')
+                  and coalesce(p.confirmacion_pago_en,p.creado_en)>=?
+                union all
+                select d.nombre_snapshot,d.sku_snapshot,d.cantidad,d.total_linea
+                from app_private.ventas_presenciales_detalle d
+                join app_private.ventas_presenciales v on v.id=d.venta_id
+                where v.creado_en>=?
+            ) lineas
+            group by nombre,sku
             order by "unidades" desc,"ingresos" desc
             limit 5
-            """,desde));
+            """,desde,desde));
 
         resultado.put("stockCritico",jdbc.queryForList("""
             select nombre,sku,stock,publicado
@@ -106,9 +136,19 @@ public class DashboardRepository {
             """));
 
         resultado.put("pedidosRecientes",jdbc.queryForList("""
-            select codigo,metodo_pago as "metodoPago",estado,
-                estado_pago as "estadoPago",total,creado_en as "creadoEn"
-            from public.pedidos order by creado_en desc limit 8
+            select codigo, "metodoPago", estado, "estadoPago", total, "creadoEn", canal
+            from (
+                select codigo,metodo_pago as "metodoPago",estado,
+                       estado_pago as "estadoPago",total,creado_en as "creadoEn",
+                       'WEB' as canal
+                from public.pedidos
+                union all
+                select codigo,medio_pago as "metodoPago",
+                       'FINALIZADO' as estado,'PAGADO' as "estadoPago",
+                       total,creado_en as "creadoEn",'PRESENCIAL' as canal
+                from app_private.ventas_presenciales
+            ) actividad
+            order by "creadoEn" desc limit 8
             """));
         return resultado;
     }
