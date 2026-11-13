@@ -134,7 +134,6 @@ public class VentasPresencialesController {
                 """,p.id(),-p.cantidad(),p.stock(),p.stock()-p.cantidad(),
                 "VENTA_PRESENCIAL:"+codigo,(UUID)request.getAttribute("adminUserId"));
         }
-        return consultar(ventaId).map(venta->ResponseEntity.status(HttpStatus.CREATED).body(venta))
-            .orElseThrow();
+        return ResponseEntity.status(HttpStatus.CREATED).body(consultar(ventaId).getBody());
     }
 }
