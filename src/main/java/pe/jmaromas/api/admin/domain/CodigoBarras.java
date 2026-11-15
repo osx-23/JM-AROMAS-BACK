@@ -5,7 +5,8 @@ import java.util.regex.Pattern;
 
 /**
  * Normalización del código del fabricante fuera del controlador y sin dependencias de Spring.
- * Acepta EAN-8, EAN-13, GTIN-14, UPC-A (a EAN-13) y códigos internos alfanuméricos.
+ * Acepta EAN-8, EAN-13, GTIN-14, UPC-A (a EAN-13) y códigos internos
+ * alfanuméricos o numéricos de longitud no GTIN (por ejemplo 0012906).
  */
 public final class CodigoBarras {
     private static final Pattern CODIGO = Pattern.compile("[A-Z0-9._-]{4,64}");
@@ -20,8 +21,10 @@ public final class CodigoBarras {
         if(!CODIGO.matcher(codigo).matches())
             throw new IllegalArgumentException("Formato no admitido");
         if(SOLO_DIGITOS.matcher(codigo).matches()) {
-            if(!(codigo.length()==8 || codigo.length()==13 || codigo.length()==14)
-               || !checksumGtin(codigo))
+            // Solo los largos GTIN se validan con checksum; etiquetas internas
+            // del fabricante pueden usar 7, 9 u otras cantidades de dígitos.
+            if((codigo.length()==8 || codigo.length()==13 || codigo.length()==14)
+               && !checksumGtin(codigo))
                 throw new IllegalArgumentException("GTIN sin dígito verificador válido");
         }
         return codigo;
