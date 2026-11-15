@@ -37,6 +37,12 @@ public class InventarioController {
     public ResponseEntity<Map<String,Object>> publicar(@PathVariable UUID id,
         @RequestBody InventarioService.Publicacion body) {return service.publicar(id,body);}
 
+    @PatchMapping("/{id}/stock-ajuste")
+    public ResponseEntity<Map<String,Object>> ajustarStock(@PathVariable UUID id,
+        @RequestBody InventarioService.AjusteStock body, HttpServletRequest request) {
+        return service.ajustarStock(id, body, request);
+    }
+
     @PatchMapping("/{id}/stock")
     public ResponseEntity<Map<String,Object>> ingresar(@PathVariable UUID id,
         @RequestBody InventarioService.IngresoStock body,HttpServletRequest request) {
