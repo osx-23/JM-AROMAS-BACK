@@ -234,6 +234,43 @@ public class InventarioService {
         return ResponseEntity.ok(Map.of("id", id, "stockAnterior", anterior, "stockNuevo", nuevo));
     }
 
+    public record AjusteStock(Integer stock, String motivo) {}
+
+    /**
+     * Ajuste absoluto desde el editor. Se registra la diferencia en el historial
+     * y nunca se modifica el stock sin auditar el movimiento.
+     */
+    @Transactional
+    public ResponseEntity<Map<String,Object>> ajustarStock(UUID id, AjusteStock data,
+                                                              HttpServletRequest request) {
+        if (data == null || data.stock() == null || data.stock() < 0 || data.stock() > 1000000) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Stock debe estar entre 0 y 1000000"));
+        }
+        String motivo = data.motivo() == null ? "" : data.motivo().strip();
+        if (motivo.isBlank() || motivo.length() > 120) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Indica un motivo de hasta 120 caracteres"));
+        }
+        List<Integer> previos = jdbc.query("select stock from public.productos where id=? for update",
+                (rs, num) -> rs.getInt(1), id);
+        if (previos.isEmpty()) return ResponseEntity.notFound().build();
+        int anterior = previos.getFirst();
+        int nuevo = data.stock();
+        if (anterior == nuevo) {
+            return ResponseEntity.ok(Map.of("id", id, "stockAnterior", anterior, "stockNuevo", nuevo,
+                    "mensaje", "El stock no cambió"));
+        }
+        int diferencia = nuevo - anterior;
+        jdbc.update("update public.productos set stock=?, actualizado_en=now() where id=?",
+                nuevo, id);
+        jdbc.update("""
+            insert into public.movimientos_stock
+                (producto_id, cantidad_delta, stock_anterior, stock_nuevo, motivo, realizado_por)
+            values (?, ?, ?, ?, ?, ?)
+            """, id, diferencia, anterior, nuevo, "AJUSTE_MANUAL: " + motivo,
+            (UUID)request.getAttribute("adminUserId"));
+        return ResponseEntity.ok(Map.of("id", id, "stockAnterior", anterior, "stockNuevo", nuevo));
+    }
+
     private static boolean precioValido(BigDecimal precio) {
         return precio!=null && precio.signum()>=0 && precio.scale()<=2 && precio.precision()<=12;
     }
