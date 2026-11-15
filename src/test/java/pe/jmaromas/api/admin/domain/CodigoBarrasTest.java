@@ -31,4 +31,22 @@ class CodigoBarrasTest {
         assertThrows(IllegalArgumentException.class,()->CodigoBarras.normalizar(null));
         assertThrows(IllegalArgumentException.class,()->CodigoBarras.normalizar("A/B C"));
     }
+    @Test
+    void aceptaEtiquetaInternaNumericaConCerosIniciales() {
+        assertEquals("0012906",CodigoBarras.normalizar("0012906"));
+        assertEquals("200094217",CodigoBarras.normalizar("200094217"));
+        assertEquals("205069116",CodigoBarras.normalizar("205069116"));
+    }
+
+    @Test
+    void aceptaIdentificadorInternoDeLongitudNoGtin() {
+        assertEquals("200094217205069116",CodigoBarras.normalizar("200094217205069116"));
+    }
+
+    @Test
+    void conservaValidacionDeEan8() {
+        assertThrows(IllegalArgumentException.class,
+            ()->CodigoBarras.normalizar("12345678"));
+    }
+
 }
